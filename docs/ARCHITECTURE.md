@@ -38,12 +38,13 @@ Sources/
 3. `WebKitUsageController` opens the official Codex Analytics page in the account's isolated WebKit session.
 4. `UsageSnapshotParser` extracts visible 5-hour and weekly cards while ignoring analytics filter controls.
 5. The controller opens the official Billing settings page to read the visible renewal text, then navigates the background web view back to Analytics.
-6. `UsageStore` persists successful snapshots. A transient failed read preserves the last valid usage values and records an error.
+6. `UsageStore` persists successful snapshots. A transient failed read preserves the last valid usage values and records an error. When old usage values remain available, the account card shows a compact stale-data warning and exposes detailed diagnostics through its tooltip.
 
 ## Refresh Model
 
-There are two independent refresh triggers:
+There are three independent refresh triggers:
 
+- Manual refresh for one account or all logged-in accounts.
 - User-configured periodic refresh for the current account or all logged-in accounts.
 - Reset-time refresh based on the parsed 5-hour or weekly reset timestamp.
 
