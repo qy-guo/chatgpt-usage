@@ -103,6 +103,16 @@ final class WebKitUsageController: NSObject, ObservableObject {
         }
     }
 
+    func refreshAllLoggedInAccounts() {
+        guard let store else {
+            return
+        }
+
+        for account in store.accounts where account.loginState.canRefreshUsage {
+            refreshUsage(account: account)
+        }
+    }
+
     func refreshAutoRefreshSchedule() {
         autoRefreshTask?.cancel()
         autoRefreshTask = nil
@@ -275,7 +285,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
             snapshot.subscriptionExpiryText = subscriptionExpiryText
         }
 
-        return snapshot
+        return snapshot.preservingSubscriptionExpiry(from: account.resolvedUsageSnapshot)
     }
 
     private func readAnalyticsUsage(from webView: WKWebView, account: AccountProfile) async -> UsageSnapshot {
