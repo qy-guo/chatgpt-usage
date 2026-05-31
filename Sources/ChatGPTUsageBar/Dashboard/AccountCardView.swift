@@ -207,13 +207,23 @@ private struct UsageSummaryView: View {
 
             usageContent
 
-            if let lastError = snapshot.lastError,
-               snapshot.fiveHourUsage == nil && snapshot.weeklyUsage == nil {
-                Label(lastError, systemImage: "exclamationmark.triangle.fill")
+            if let lastError = snapshot.lastError {
+                if snapshot.hasUsageData {
+                    Label(
+                        "刷新失败，当前显示的是上次成功读取的数据",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
                     .font(.caption)
                     .foregroundStyle(.orange)
-                    .lineLimit(5)
-                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .help(lastError)
+                } else {
+                    Label(lastError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(5)
+                        .textSelection(.enabled)
+                }
             }
         }
         .padding(.top, 2)

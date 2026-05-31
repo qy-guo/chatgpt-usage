@@ -257,6 +257,10 @@ struct DashboardView: View {
             .id
     }
 
+    private var canRefreshAllLoggedInAccounts: Bool {
+        store.accounts.contains { $0.loginState.canRefreshUsage }
+    }
+
     private var header: some View {
         HStack(spacing: 12) {
             Image(systemName: "chart.bar.xaxis")
@@ -274,6 +278,16 @@ struct DashboardView: View {
             }
 
             Spacer()
+
+            Button {
+                pendingDelete = nil
+                webKitUsageController.refreshAllLoggedInAccounts()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(GlassIconButtonStyle(tint: .accentColor))
+            .disabled(!canRefreshAllLoggedInAccounts)
+            .help("刷新所有已登录账号")
 
             Button {
                 pendingDelete = nil
