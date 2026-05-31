@@ -50,6 +50,16 @@ public struct UsageSnapshot: Codable, Equatable {
         return merged
     }
 
+    public func preservingSubscriptionExpiry(from previous: UsageSnapshot) -> UsageSnapshot {
+        guard subscriptionExpiryText == nil else {
+            return self
+        }
+
+        var merged = self
+        merged.subscriptionExpiryText = previous.subscriptionExpiryText
+        return merged
+    }
+
     public func removingAnalyticsFilterChromeUsage() -> UsageSnapshot {
         var sanitized = self
         if Self.isAnalyticsFilterChromeUsage(fiveHourUsage) {

@@ -215,6 +215,25 @@ func checkUsageSnapshotPreservesPreviousUsageAfterReadFailure() {
     precondition(merged.lastError == failedRead.lastError)
 }
 
+func checkUsageSnapshotPreservesPreviousSubscriptionExpiryWhenBillingReadFails() {
+    let previous = UsageSnapshot(
+        fiveHourUsage: "42% 剩余 · 重置时间：19:30",
+        weeklyUsage: "91% 剩余 · 重置时间：2026年6月1日 0:12",
+        subscriptionExpiryText: "2026年6月18日 自动续订"
+    )
+    let refreshed = UsageSnapshot(
+        fiveHourUsage: "76% 剩余 · 重置时间：23:30",
+        weeklyUsage: "95% 剩余 · 重置时间：2026年6月8日 0:12"
+    )
+
+    let merged = refreshed.preservingSubscriptionExpiry(from: previous)
+
+    precondition(merged.fiveHourUsage == refreshed.fiveHourUsage)
+    precondition(merged.weeklyUsage == refreshed.weeklyUsage)
+    precondition(merged.subscriptionExpiryText == previous.subscriptionExpiryText)
+    precondition(merged.lastError == nil)
+}
+
 func checkUsageSnapshotSanitizesAnalyticsFilterChromeUsage() {
     let snapshot = UsageSnapshot(
         weeklyUsage: "Data controls · Codex Analytics · 7D · 1M · Custom · Group by: Day · Usage details",
@@ -566,6 +585,7 @@ checkUsageAnalyticsReadinessDetectsLoadingPage()
 checkUsageAnalyticsReadinessDetectsExpectedRoute()
 checkUsageSnapshotParserIgnoresAnalyticsFilterChrome()
 checkUsageSnapshotPreservesPreviousUsageAfterReadFailure()
+checkUsageSnapshotPreservesPreviousSubscriptionExpiryWhenBillingReadFails()
 checkUsageSnapshotSanitizesAnalyticsFilterChromeUsage()
 checkAccountProfileOrderingMovesSourceBeforeTarget()
 checkAccountProfileOrderingKeepsPinnedAccountsAtTop()
