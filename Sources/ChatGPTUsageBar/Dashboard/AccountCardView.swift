@@ -129,6 +129,7 @@ struct AccountCardView: View {
 
             UsageSummaryView(
                 snapshot: account.resolvedUsageSnapshot,
+                loginState: account.loginState,
                 isRefreshingUsage: isRefreshingUsage
             )
 
@@ -136,7 +137,7 @@ struct AccountCardView: View {
                 Divider()
 
                 HStack(spacing: 8) {
-                    Label("删除这个账号档案？", systemImage: "exclamationmark.triangle.fill")
+                    Label("删除档案并清除本地登录会话？", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
@@ -197,6 +198,7 @@ struct AccountCardView: View {
 
 private struct UsageSummaryView: View {
     let snapshot: UsageSnapshot
+    let loginState: AccountLoginState
     let isRefreshingUsage: Bool
 
     var body: some View {
@@ -282,7 +284,7 @@ private struct UsageSummaryView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Text(isRefreshingUsage ? "正在后台读取 Usage Dashboard" : "登录后用右上角刷新读取用量")
+                Text(emptyUsageText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -305,6 +307,21 @@ private struct UsageSummaryView: View {
         formatter.locale = Locale(identifier: "zh_Hans_CN")
         formatter.unitsStyle = .short
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private var emptyUsageText: String {
+        if isRefreshingUsage {
+            return "正在后台读取 Usage Dashboard"
+        }
+
+        switch loginState {
+        case .notLoggedIn:
+            return "先点击登录图标完成 ChatGPT 登录"
+        case .sessionDetected:
+            return "已检测到登录，正在自动读取用量"
+        case .confirmed:
+            return "登录后用右上角刷新读取用量"
+        }
     }
 }
 

@@ -164,7 +164,7 @@ struct DashboardView: View {
                 pendingDelete = nil
             },
             onConfirmDelete: {
-                store.deleteAccount(id: account.id)
+                webKitUsageController.deleteAccount(account: account)
                 pendingDelete = nil
             }
         )

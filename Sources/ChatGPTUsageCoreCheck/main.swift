@@ -170,6 +170,35 @@ func checkUsageAnalyticsReadinessDetectsExpectedRoute() {
     precondition(!UsageAnalyticsReadiness.isExpectedAnalyticsURL("about:blank"))
 }
 
+func checkUsageAnalyticsReadinessDetectsLoginRequiredPages() {
+    precondition(
+        UsageAnalyticsReadiness.isLoginRequiredPage(
+            urlString: "https://chatgpt.com/auth/login",
+            visibleText: ""
+        )
+    )
+    precondition(
+        UsageAnalyticsReadiness.isLoginRequiredPage(
+            urlString: "https://chatgpt.com/",
+            visibleText: "Log in Sign up Continue with Google"
+        )
+    )
+    precondition(
+        UsageAnalyticsReadiness.isLoginRequiredPage(
+            urlString: "https://chatgpt.com/codex/cloud/settings/analytics",
+            visibleText: "请登录后继续"
+        )
+    )
+    precondition(
+        !UsageAnalyticsReadiness.isLoginRequiredPage(
+            urlString: "https://chatgpt.com/codex/cloud/settings/analytics",
+            visibleText: "Codex Analytics 正在加载使用数据"
+        )
+    )
+    precondition(UsageAnalyticsReadiness.isLoginRequiredMessage(UsageAnalyticsReadiness.loginRequiredMessage))
+    precondition(!UsageAnalyticsReadiness.isLoginRequiredMessage("Analytics 页面仍在加载使用数据，请稍后重试。"))
+}
+
 func checkUsageSnapshotParserIgnoresAnalyticsFilterChrome() {
     let snapshot = UsageSnapshotParser.parse(
         visibleText: """
@@ -245,6 +274,29 @@ func checkUsageSnapshotSanitizesAnalyticsFilterChromeUsage() {
     precondition(sanitized.fiveHourUsage == nil)
     precondition(sanitized.weeklyUsage == nil)
     precondition(!sanitized.hasUsageData)
+}
+
+func checkFirstUsageRefreshPolicyStartsAfterDetectedSession() {
+    let emptyAccount = AccountProfile.starter(profileDirectory: "Default")
+    precondition(FirstUsageRefreshPolicy.shouldRefreshAfterSessionDetected(account: emptyAccount))
+
+    let accountWithUsage = AccountProfile(
+        displayName: "已有数据账号",
+        subscription: .plus,
+        chromeProfileDirectory: "Profile 1",
+        usageSnapshot: UsageSnapshot(fiveHourUsage: "42% 剩余 · 重置时间：19:30"),
+        loginState: .confirmed
+    )
+    precondition(!FirstUsageRefreshPolicy.shouldRefreshAfterSessionDetected(account: accountWithUsage))
+}
+
+func checkAccountDeletionPlanClearsLocalSession() {
+    let accountID = UUID(uuidString: "00000000-0000-0000-0000-000000000041")!
+    let plan = AccountDeletionPlan(accountID: accountID)
+
+    precondition(plan.accountID == accountID)
+    precondition(plan.clearsLocalWebSession)
+    precondition(plan.closesActiveBrowserSurfaces)
 }
 
 func checkAccountProfileOrderingMovesSourceBeforeTarget() {
@@ -583,10 +635,13 @@ checkUsageSnapshotParserReadsArticleCards()
 checkUsageSnapshotParserReadsSubscriptionExpiry()
 checkUsageAnalyticsReadinessDetectsLoadingPage()
 checkUsageAnalyticsReadinessDetectsExpectedRoute()
+checkUsageAnalyticsReadinessDetectsLoginRequiredPages()
 checkUsageSnapshotParserIgnoresAnalyticsFilterChrome()
 checkUsageSnapshotPreservesPreviousUsageAfterReadFailure()
 checkUsageSnapshotPreservesPreviousSubscriptionExpiryWhenBillingReadFails()
 checkUsageSnapshotSanitizesAnalyticsFilterChromeUsage()
+checkFirstUsageRefreshPolicyStartsAfterDetectedSession()
+checkAccountDeletionPlanClearsLocalSession()
 checkAccountProfileOrderingMovesSourceBeforeTarget()
 checkAccountProfileOrderingKeepsPinnedAccountsAtTop()
 try checkUsageStoreSettingsRoundTrip()

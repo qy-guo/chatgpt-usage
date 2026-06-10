@@ -89,7 +89,11 @@ final class WebKitUsageController: NSObject, ObservableObject {
             refreshingAccountIDs.remove(account.id)
             store?.updateUsageSnapshot(accountID: account.id, snapshot: snapshot)
 
-            if snapshot.hasUsageData {
+            if UsageAnalyticsReadiness.isLoginRequiredMessage(snapshot.lastError) {
+                store?.updateLoginState(accountID: account.id, loginState: .notLoggedIn)
+                resetRefreshTasks[account.id]?.cancel()
+                resetRefreshTasks[account.id] = nil
+            } else if snapshot.hasUsageData {
                 scheduleResetRefresh(
                     accountID: account.id,
                     snapshot: snapshot,
@@ -101,6 +105,22 @@ final class WebKitUsageController: NSObject, ObservableObject {
                 resetRefreshTasks[account.id] = nil
             }
         }
+    }
+
+    func deleteAccount(account: AccountProfile) {
+        let deletionPlan = AccountDeletionPlan(accountID: account.id)
+
+        if deletionPlan.closesActiveBrowserSurfaces {
+            closeBrowserSurfaces(accountID: deletionPlan.accountID)
+        }
+
+        if deletionPlan.clearsLocalWebSession {
+            Task { [weak self] in
+                await self?.clearWebsiteData(for: deletionPlan.accountID)
+            }
+        }
+
+        store?.deleteAccount(id: deletionPlan.accountID)
     }
 
     func refreshAllLoggedInAccounts() {
@@ -196,10 +216,20 @@ final class WebKitUsageController: NSObject, ObservableObject {
 
                 let cookieCount = await self.cookieCount(for: account)
                 if cookieCount > 0 {
+                    if let loginURL = self.loginWebViews[account.id]?.url?.absoluteString,
+                       UsageAnalyticsReadiness.isLoginRequiredPage(urlString: loginURL, visibleText: "") {
+                        continue
+                    }
+
+                    let previousAccount = self.latestAccount(for: account.id) ?? account
                     self.store?.updateLoginState(
                         accountID: account.id,
                         loginState: .sessionDetected
                     )
+                    if FirstUsageRefreshPolicy.shouldRefreshAfterSessionDetected(account: previousAccount),
+                       let refreshedAccount = self.latestAccount(for: account.id) {
+                        self.refreshUsage(account: refreshedAccount)
+                    }
                     self.sessionCheckTasks[account.id] = nil
                     return
                 }
@@ -301,6 +331,10 @@ final class WebKitUsageController: NSObject, ObservableObject {
 
             do {
                 let currentURL = await currentLocationString(from: webView)
+                if UsageAnalyticsReadiness.isLoginRequiredPage(urlString: currentURL, visibleText: "") {
+                    return loginRequiredSnapshot()
+                }
+
                 guard UsageAnalyticsReadiness.isExpectedAnalyticsURL(currentURL) else {
                     consecutiveLoadingAttempts = 0
                     lastError = "正在切换到 Analytics 页面，请稍后重试。"
@@ -323,6 +357,13 @@ final class WebKitUsageController: NSObject, ObservableObject {
                 }
 
                 let diagnostics = try await readDiagnostics(from: webView, account: account)
+                if UsageAnalyticsReadiness.isLoginRequiredPage(
+                    urlString: currentURL,
+                    visibleText: diagnostics.payload
+                ) {
+                    return loginRequiredSnapshot()
+                }
+
                 if UsageAnalyticsReadiness.isStillLoading(payload)
                     || UsageAnalyticsReadiness.isStillLoading(diagnostics.payload) {
                     consecutiveLoadingAttempts += 1
@@ -348,6 +389,13 @@ final class WebKitUsageController: NSObject, ObservableObject {
         lastSnapshot.lastReadAt = Date()
         lastSnapshot.lastError = lastError ?? "后台读取 analytics 超时。请打开登录窗口确认账号仍处于登录状态。"
         return lastSnapshot
+    }
+
+    private func loginRequiredSnapshot() -> UsageSnapshot {
+        UsageSnapshot(
+            lastReadAt: Date(),
+            lastError: UsageAnalyticsReadiness.loginRequiredMessage
+        )
     }
 
     private func reloadAnalyticsPage(_ webView: WKWebView) {
@@ -402,6 +450,41 @@ final class WebKitUsageController: NSObject, ObservableObject {
                 continuation.resume(returning: cookies.count)
             }
         }
+    }
+
+    private func clearWebsiteData(for accountID: UUID) async {
+        await withCheckedContinuation { continuation in
+            let dataStore = WKWebsiteDataStore(forIdentifier: accountID)
+            dataStore.removeData(
+                ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+                modifiedSince: .distantPast
+            ) {
+                continuation.resume()
+            }
+        }
+    }
+
+    private func closeBrowserSurfaces(accountID: UUID) {
+        sessionCheckTasks[accountID]?.cancel()
+        sessionCheckTasks[accountID] = nil
+        resetRefreshTasks[accountID]?.cancel()
+        resetRefreshTasks[accountID] = nil
+        refreshingAccountIDs.remove(accountID)
+
+        if let loginWindow = loginWindows[accountID] {
+            loginWindow.delegate = nil
+            loginWindow.contentView = nil
+            loginWindow.close()
+        }
+        loginWindows[accountID] = nil
+        loginWebViews[accountID] = nil
+
+        if let backgroundWindow = backgroundUsageWindows[accountID] {
+            backgroundWindow.contentView = nil
+            backgroundWindow.close()
+        }
+        backgroundUsageWindows[accountID] = nil
+        backgroundUsageWebViews[accountID] = nil
     }
 
     private func makeWebView(for account: AccountProfile) -> WKWebView {

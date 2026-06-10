@@ -65,6 +65,8 @@ public enum AutoRefreshSchedule {
 }
 
 public enum UsageAnalyticsReadiness {
+    public static let loginRequiredMessage = "登录状态已失效，请重新登录。"
+
     public static func isExpectedAnalyticsURL(_ urlString: String?) -> Bool {
         guard let urlString,
               let url = URL(string: urlString),
@@ -73,6 +75,50 @@ public enum UsageAnalyticsReadiness {
         }
 
         return url.path == "/codex/cloud/settings/analytics"
+    }
+
+    public static func isLoginRequiredPage(urlString: String?, visibleText: String) -> Bool {
+        if let urlString,
+           let url = URL(string: urlString),
+           url.host?.lowercased() == "chatgpt.com" {
+            let path = url.path.lowercased()
+            if path.contains("/auth") || path.contains("/login") {
+                return true
+            }
+        }
+
+        let normalized = visibleText
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        guard !normalized.isEmpty else {
+            return false
+        }
+
+        let pageURLMarkers = [
+            "url=https://chatgpt.com/auth",
+            "url=https://chatgpt.com/login"
+        ]
+        if pageURLMarkers.contains(where: { normalized.contains($0) }) {
+            return true
+        }
+
+        let loginMarkers = [
+            "log in sign up",
+            "log in",
+            "sign in",
+            "continue with google",
+            "continue with microsoft",
+            "请登录",
+            "登录后继续",
+            "登录以继续"
+        ]
+        return loginMarkers.contains { normalized.contains($0) }
+    }
+
+    public static func isLoginRequiredMessage(_ message: String?) -> Bool {
+        message == loginRequiredMessage
     }
 
     public static func isStillLoading(_ visibleText: String) -> Bool {
