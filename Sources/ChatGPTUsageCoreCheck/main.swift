@@ -227,6 +227,28 @@ func checkUsageSnapshotParserIgnoresQuotaResetAsSubscriptionExpiry() {
     precondition(snapshot.weeklyUsage == "51% 剩余 · 重置 2026年6月12日 13:30")
 }
 
+func checkUsageSnapshotParserEnglishSubscriptionContext() {
+    let subscriptionSnapshot = UsageSnapshotParser.parse(
+        visibleText: """
+        ChatGPT Plus
+        Your Plus plan will renew on June 18, 2026. Manage plan
+        """
+    )
+
+    precondition(subscriptionSnapshot.subscriptionExpiryText == "June 18, 2026")
+
+    let quotaSnapshot = UsageSnapshotParser.parse(
+        visibleText: """
+        Codex Analytics
+        Your 5-hour usage limit will renew on June 12, 2026 at 1:30 PM. Upgrade to add credits.
+        USAGE_CARD | kind=5h | remaining=0% | reset=Resets at 1:30 PM
+        """
+    )
+
+    precondition(quotaSnapshot.subscriptionExpiryText == nil)
+    precondition(quotaSnapshot.fiveHourUsage == "0% 剩余 · Resets at 1:30 PM")
+}
+
 func checkUsageAnalyticsReadinessDetectsLoadingPage() {
     let loadingDiagnostics = """
     URL=https://chatgpt.com/codex/cloud/settings/analytics
@@ -551,6 +573,13 @@ func checkFirstUsageRefreshPolicyStartsAfterDetectedSession() {
     precondition(!FirstUsageRefreshPolicy.shouldRefreshAfterSessionDetected(account: accountWithUsage))
 }
 
+func checkStoredSessionRecoveryPolicy() {
+    precondition(StoredSessionRecoveryPolicy.canStartRecovery(loginState: .notLoggedIn, isChecking: false))
+    precondition(!StoredSessionRecoveryPolicy.canStartRecovery(loginState: .notLoggedIn, isChecking: true))
+    precondition(!StoredSessionRecoveryPolicy.canStartRecovery(loginState: .sessionDetected, isChecking: false))
+    precondition(!StoredSessionRecoveryPolicy.canStartRecovery(loginState: .confirmed, isChecking: false))
+}
+
 func checkAccountDeletionPlanClearsLocalSession() {
     let accountID = UUID(uuidString: "00000000-0000-0000-0000-000000000041")!
     let plan = AccountDeletionPlan(accountID: accountID)
@@ -790,6 +819,32 @@ func checkUsageResetScheduleParsesFiveHourResetDates() {
     precondition(
         fullDateReset == date(year: 2026, month: 5, day: 25, hour: 1, minute: 32, calendar: calendar)
     )
+
+    let eveningNow = date(
+        year: 2026,
+        month: 6,
+        day: 10,
+        hour: 18,
+        minute: 0,
+        calendar: calendar
+    )
+    let ampmReset = UsageResetSchedule.nextFiveHourResetDate(
+        from: "0% remaining · Resets at 7:45 PM",
+        now: eveningNow,
+        calendar: calendar
+    )
+    precondition(
+        ampmReset == date(year: 2026, month: 6, day: 10, hour: 19, minute: 45, calendar: calendar)
+    )
+
+    let nextDayAMPMReset = UsageResetSchedule.nextFiveHourResetDate(
+        from: "0% remaining · Resets at 7:45 PM",
+        now: date(year: 2026, month: 6, day: 10, hour: 20, minute: 0, calendar: calendar),
+        calendar: calendar
+    )
+    precondition(
+        nextDayAMPMReset == date(year: 2026, month: 6, day: 11, hour: 19, minute: 45, calendar: calendar)
+    )
 }
 
 func checkUsageResetScheduleCatchesUpMissedFiveHourReset() {
@@ -851,6 +906,22 @@ func checkUsageResetScheduleHandlesWeeklyFullDateOnly() {
             now: now,
             calendar: calendar
         ) == nil
+    )
+
+    precondition(
+        UsageResetSchedule.nextWeeklyResetDate(
+            from: "51% remaining · Resets Jun 12, 2026, 1:30 PM",
+            now: now,
+            calendar: calendar
+        ) == date(year: 2026, month: 6, day: 12, hour: 13, minute: 30, calendar: calendar)
+    )
+
+    precondition(
+        UsageResetSchedule.nextWeeklyResetDate(
+            from: "51% remaining · Resets June 12 at 13:30",
+            now: now,
+            calendar: calendar
+        ) == date(year: 2026, month: 6, day: 12, hour: 13, minute: 30, calendar: calendar)
     )
 }
 
@@ -947,6 +1018,7 @@ try checkUsageSnapshotParserReadsStructuredFixture()
 try checkUsageSnapshotParserMarksOutdatedFixture()
 checkUsageSnapshotParserReadsSubscriptionExpiry()
 checkUsageSnapshotParserIgnoresQuotaResetAsSubscriptionExpiry()
+checkUsageSnapshotParserEnglishSubscriptionContext()
 checkUsageAnalyticsReadinessDetectsLoadingPage()
 checkUsageAnalyticsReadinessDetectsExpectedRoute()
 checkUsageAnalyticsReadinessDetectsLoginRequiredPages()
@@ -961,6 +1033,7 @@ checkUsageRefreshPhaseDisplayAndDiagnostics()
 checkUsageDiagnosticReportIncludesPhaseAndSuggestedAction()
 checkAccountSessionVerificationRequiresAuthenticatedPage()
 checkFirstUsageRefreshPolicyStartsAfterDetectedSession()
+checkStoredSessionRecoveryPolicy()
 checkAccountDeletionPlanClearsLocalSession()
 checkAccountProfileOrderingMovesSourceBeforeTarget()
 checkAccountProfileOrderingKeepsPinnedAccountsAtTop()

@@ -21,3 +21,12 @@ public enum FirstUsageRefreshPolicy {
         !account.resolvedUsageSnapshot.hasUsageData
     }
 }
+
+public enum StoredSessionRecoveryPolicy {
+    public static func canStartRecovery(
+        loginState: AccountLoginState,
+        isChecking: Bool
+    ) -> Bool {
+        loginState == .notLoggedIn && !isChecking
+    }
+}

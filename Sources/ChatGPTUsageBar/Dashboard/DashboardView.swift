@@ -141,6 +141,7 @@ struct DashboardView: View {
             isRefreshingUsage: webKitUsageController.refreshingAccountIDs.contains(account.id),
             isQueuedForRefresh: webKitUsageController.queuedRefreshAccountIDs.contains(account.id),
             refreshPhase: webKitUsageController.refreshPhases[account.id],
+            isCheckingStoredSession: webKitUsageController.checkingStoredSessionAccountIDs.contains(account.id),
             canRefreshUsage: account.loginState.canRefreshUsage,
             isConfirmingDelete: !isOverlay && pendingDelete?.id == account.id,
             onTogglePinned: {
@@ -151,6 +152,9 @@ struct DashboardView: View {
             },
             onLogin: {
                 webKitUsageController.openLogin(account: account)
+            },
+            onCheckStoredSession: {
+                webKitUsageController.checkStoredLoginSession(account: account)
             },
             onRefreshUsage: {
                 webKitUsageController.refreshUsage(account: account)

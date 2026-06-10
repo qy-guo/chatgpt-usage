@@ -51,10 +51,12 @@ struct AccountCardView: View {
     let isRefreshingUsage: Bool
     let isQueuedForRefresh: Bool
     let refreshPhase: UsageRefreshPhase?
+    let isCheckingStoredSession: Bool
     let canRefreshUsage: Bool
     let isConfirmingDelete: Bool
     let onTogglePinned: () -> Void
     let onLogin: () -> Void
+    let onCheckStoredSession: () -> Void
     let onRefreshUsage: () -> Void
     let onEdit: () -> Void
     let onRequestDelete: () -> Void
@@ -108,6 +110,15 @@ struct AccountCardView: View {
                     .buttonStyle(GlassIconButtonStyle(tint: .primary))
                     .help("打开登录窗口")
 
+                    if canCheckStoredSession {
+                        Button(action: onCheckStoredSession) {
+                            Image(systemName: isCheckingStoredSession ? "hourglass" : "checkmark.shield")
+                        }
+                        .buttonStyle(GlassIconButtonStyle(tint: .primary))
+                        .disabled(isCheckingStoredSession)
+                        .help(checkStoredSessionHelp)
+                    }
+
                     Button(action: onRefreshUsage) {
                         Image(systemName: "arrow.clockwise")
                     }
@@ -134,7 +145,8 @@ struct AccountCardView: View {
                 loginState: account.loginState,
                 isRefreshingUsage: isRefreshingUsage,
                 isQueuedForRefresh: isQueuedForRefresh,
-                refreshPhase: refreshPhase
+                refreshPhase: refreshPhase,
+                isCheckingStoredSession: isCheckingStoredSession
             )
 
             if isConfirmingDelete {
@@ -210,6 +222,21 @@ struct AccountCardView: View {
 
         return "登录后可刷新用量"
     }
+
+    private var canCheckStoredSession: Bool {
+        StoredSessionRecoveryPolicy.canStartRecovery(
+            loginState: account.loginState,
+            isChecking: false
+        ) || isCheckingStoredSession
+    }
+
+    private var checkStoredSessionHelp: String {
+        if isCheckingStoredSession {
+            return "正在检测本地登录状态"
+        }
+
+        return "重新检测本地登录状态"
+    }
 }
 
 private struct UsageSummaryView: View {
@@ -218,19 +245,11 @@ private struct UsageSummaryView: View {
     let isRefreshingUsage: Bool
     let isQueuedForRefresh: Bool
     let refreshPhase: UsageRefreshPhase?
+    let isCheckingStoredSession: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             statusHeader
-
-            if snapshot.hasUsageData,
-               let activeRefreshText {
-                Label(activeRefreshText, systemImage: activeRefreshSystemImage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .help(activeRefreshHelp)
-            }
 
             subscriptionExpiryContent
 
@@ -261,30 +280,25 @@ private struct UsageSummaryView: View {
 
     private var statusHeader: some View {
         HStack(spacing: 8) {
-            HStack(spacing: 4) {
-                if isRefreshingUsage {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(width: 10, height: 10)
-                } else if isQueuedForRefresh {
-                    Image(systemName: "hourglass")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 10, height: 10)
-                }
+            Text("用量")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: usageLabelColumnWidth, alignment: .trailing)
 
-                Text("用量")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+            if let activeRefreshText {
+                ShimmeringRefreshStatusLabel(text: activeRefreshText)
+                .help(activeRefreshHelp)
+                .layoutPriority(1)
             }
-            .frame(width: usageLabelColumnWidth, alignment: .trailing)
 
-            Spacer()
+            Spacer(minLength: 8)
 
             if let lastReadAt = snapshot.lastReadAt {
                 Text(relative(lastReadAt))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .layoutPriority(2)
             }
         }
     }
@@ -344,7 +358,7 @@ private struct UsageSummaryView: View {
 
     private var emptyUsageText: String {
         if let activeRefreshText {
-            return activeRefreshText
+            return "\(activeRefreshText)，等待用量数据"
         }
 
         switch loginState {
@@ -362,6 +376,10 @@ private struct UsageSummaryView: View {
             return refreshPhase.displayName
         }
 
+        if isCheckingStoredSession {
+            return "确认登录状态"
+        }
+
         if isQueuedForRefresh {
             return "等待刷新队列"
         }
@@ -371,14 +389,6 @@ private struct UsageSummaryView: View {
         }
 
         return nil
-    }
-
-    private var activeRefreshSystemImage: String {
-        if isQueuedForRefresh || refreshPhase == .queued {
-            return "hourglass"
-        }
-
-        return "arrow.triangle.2.circlepath"
     }
 
     private var activeRefreshHelp: String {
@@ -395,6 +405,68 @@ private struct UsageSummaryView: View {
         }
 
         return "刷新失败，当前显示的是上次成功读取的数据"
+    }
+}
+
+private struct ShimmeringRefreshStatusLabel: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let text: String
+
+    @State private var shimmerPhase: CGFloat = 0
+
+    var body: some View {
+        label
+            .overlay {
+                if !reduceMotion {
+                    shimmerLayer
+                        .mask(label)
+                }
+            }
+            .compositingGroup()
+            .onAppear(perform: startShimmer)
+            .onChange(of: text) {
+                startShimmer()
+            }
+    }
+
+    private var label: some View {
+        Text(text)
+            .lineLimit(1)
+            .minimumScaleFactor(0.86)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private var shimmerLayer: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let shimmerWidth = min(max(width * 0.42, 34), 82)
+            let travelDistance = width + shimmerWidth * 2
+
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .white.opacity(0.16), location: 0.32),
+                    .init(color: .white.opacity(0.88), location: 0.50),
+                    .init(color: .white.opacity(0.16), location: 0.68),
+                    .init(color: .clear, location: 1)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            .frame(width: shimmerWidth)
+            .offset(x: shimmerPhase * travelDistance - shimmerWidth)
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func startShimmer() {
+        shimmerPhase = 0
+
+        withAnimation(.linear(duration: 1.45).delay(0.18).repeatForever(autoreverses: false)) {
+            shimmerPhase = 1
+        }
     }
 }
 

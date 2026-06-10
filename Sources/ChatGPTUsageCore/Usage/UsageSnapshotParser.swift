@@ -170,6 +170,11 @@ public enum UsageSnapshotParser {
                 continue
             }
 
+            guard isEnglishSubscriptionExpiryLine(line),
+                  !isQuotaRenewalLine(line) else {
+                return nil
+            }
+
             let summary = cleanedSubscriptionExpirySummary(String(line[range.upperBound...]))
             return summary.isEmpty ? nil : summary
         }
@@ -193,6 +198,21 @@ public enum UsageSnapshotParser {
         return markers.contains { value.contains($0) }
     }
 
+    private static func isEnglishSubscriptionExpiryLine(_ line: String) -> Bool {
+        let value = line.lowercased()
+        let markers = [
+            "subscription",
+            "plan",
+            "billing",
+            "membership",
+            "plus",
+            "pro",
+            "team",
+            "enterprise"
+        ]
+        return markers.contains { value.contains($0) }
+    }
+
     private static func isQuotaResetLine(_ line: String) -> Bool {
         let value = line.lowercased()
         let hasResetSignal = value.contains("重置") || value.contains("reset")
@@ -207,6 +227,23 @@ public enum UsageSnapshotParser {
             "remaining"
         ]
         return hasResetSignal && quotaMarkers.contains { value.contains($0) }
+    }
+
+    private static func isQuotaRenewalLine(_ line: String) -> Bool {
+        let value = line.lowercased()
+        let quotaMarkers = [
+            "使用限额",
+            "额度",
+            "余额",
+            "usage",
+            "limit",
+            "quota",
+            "allowance",
+            "remaining",
+            "credit",
+            "credits"
+        ]
+        return quotaMarkers.contains { value.contains($0) }
     }
 
     private static func cleanedSubscriptionExpirySummary(_ value: String) -> String {

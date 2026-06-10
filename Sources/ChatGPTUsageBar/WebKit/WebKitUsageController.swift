@@ -9,6 +9,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
     @Published private(set) var refreshingAccountIDs = Set<UUID>()
     @Published private(set) var queuedRefreshAccountIDs: [UUID] = []
     @Published private(set) var refreshPhases: [UUID: UsageRefreshPhase] = [:]
+    @Published private(set) var checkingStoredSessionAccountIDs = Set<UUID>()
 
     private weak var store: UsageStore?
     private let refreshQueuePolicy = RefreshQueuePolicy()
@@ -20,12 +21,14 @@ final class WebKitUsageController: NSObject, ObservableObject {
     private var autoRefreshTask: Task<Void, Never>?
     private var resetRefreshTasks: [UUID: Task<Void, Never>] = [:]
     private var sessionCheckTasks: [UUID: Task<Void, Never>] = [:]
+    private var storedSessionRecoveryTasks: [UUID: Task<Void, Never>] = [:]
     private var storeCancellables = Set<AnyCancellable>()
 
     deinit {
         autoRefreshTask?.cancel()
         resetRefreshTasks.values.forEach { $0.cancel() }
         sessionCheckTasks.values.forEach { $0.cancel() }
+        storedSessionRecoveryTasks.values.forEach { $0.cancel() }
     }
 
     func attach(store: UsageStore) {
@@ -89,6 +92,60 @@ final class WebKitUsageController: NSObject, ObservableObject {
         queuedRefreshAccountIDs.append(account.id)
         setRefreshPhase(.queued, for: account.id)
         drainRefreshQueue()
+    }
+
+    func checkStoredLoginSession(account: AccountProfile) {
+        let account = latestAccount(for: account.id) ?? account
+        guard StoredSessionRecoveryPolicy.canStartRecovery(
+            loginState: account.loginState,
+            isChecking: checkingStoredSessionAccountIDs.contains(account.id)
+        ) else {
+            return
+        }
+
+        checkingStoredSessionAccountIDs.insert(account.id)
+        setRefreshPhase(.checkingLogin, for: account.id)
+
+        storedSessionRecoveryTasks[account.id]?.cancel()
+        storedSessionRecoveryTasks[account.id] = Task { [weak self] in
+            guard let self else {
+                return
+            }
+
+            var startsRefresh = false
+            defer {
+                self.checkingStoredSessionAccountIDs.remove(account.id)
+                self.storedSessionRecoveryTasks[account.id] = nil
+                if !startsRefresh {
+                    self.clearRefreshPhase(for: account.id)
+                }
+            }
+
+            let isVerified = await self.storedLoginSessionIsVerified(for: account)
+            guard !Task.isCancelled else {
+                return
+            }
+
+            if isVerified {
+                let previousAccount = self.latestAccount(for: account.id) ?? account
+                self.store?.updateLoginState(
+                    accountID: account.id,
+                    loginState: .sessionDetected
+                )
+                if FirstUsageRefreshPolicy.shouldRefreshAfterSessionDetected(account: previousAccount),
+                   let refreshedAccount = self.latestAccount(for: account.id) {
+                    self.clearRefreshPhase(for: account.id)
+                    self.refreshUsage(account: refreshedAccount)
+                    startsRefresh = self.refreshingAccountIDs.contains(account.id)
+                        || self.queuedRefreshAccountIDs.contains(account.id)
+                }
+            } else {
+                self.store?.updateLoginState(
+                    accountID: account.id,
+                    loginState: .notLoggedIn
+                )
+            }
+        }
     }
 
     private func startRefresh(account: AccountProfile) {
@@ -299,6 +356,46 @@ final class WebKitUsageController: NSObject, ObservableObject {
             urlString: currentURL,
             visibleText: payload
         )
+    }
+
+    private func storedLoginSessionIsVerified(for account: AccountProfile) async -> Bool {
+        let cookieCount = await cookieCount(for: account)
+        guard cookieCount > 0 else {
+            return false
+        }
+
+        let webView = backgroundUsageWebViews[account.id] ?? makeWebView(for: account)
+        backgroundUsageWebViews[account.id] = webView
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+        mountBackgroundWebView(webView, for: account)
+
+        setRefreshPhase(.openingAnalytics, for: account.id)
+        webView.load(URLRequest(url: ChatGPTUsageURLs.analytics))
+
+        for attempt in 0..<10 {
+            try? await Task.sleep(for: .seconds(attempt == 0 ? 4 : 1))
+            guard !Task.isCancelled else {
+                return false
+            }
+
+            setRefreshPhase(.checkingLogin, for: account.id)
+            let currentURL = await currentLocationString(from: webView)
+            let payload = (try? await webView.evaluateJavaScript(Self.diagnosticJavaScript()) as? String) ?? ""
+            if AccountSessionVerification.canTrustCookieSession(
+                cookieCount: cookieCount,
+                urlString: currentURL,
+                visibleText: payload
+            ) {
+                return true
+            }
+
+            if UsageAnalyticsReadiness.isLoginRequiredPage(urlString: currentURL, visibleText: payload) {
+                return false
+            }
+        }
+
+        return false
     }
 
     func rescheduleResetRefreshes() {
@@ -549,6 +646,9 @@ final class WebKitUsageController: NSObject, ObservableObject {
     private func closeBrowserSurfaces(accountID: UUID) {
         sessionCheckTasks[accountID]?.cancel()
         sessionCheckTasks[accountID] = nil
+        storedSessionRecoveryTasks[accountID]?.cancel()
+        storedSessionRecoveryTasks[accountID] = nil
+        checkingStoredSessionAccountIDs.remove(accountID)
         resetRefreshTasks[accountID]?.cancel()
         resetRefreshTasks[accountID] = nil
         refreshingAccountIDs.remove(accountID)
