@@ -32,6 +32,10 @@ final class UsageStore: ObservableObject {
         settings.autoRefresh
     }
 
+    var refreshEffectSettings: RefreshEffectSettings {
+        settings.refreshEffects
+    }
+
     var themePreference: AppThemePreference {
         settings.themePreference
     }
@@ -134,6 +138,24 @@ final class UsageStore: ObservableObject {
         }
 
         settings.autoRefresh.interval = interval
+        saveSettings()
+    }
+
+    func setRefreshEffectsEnabled(_ isEnabled: Bool) {
+        guard settings.refreshEffects.isEnabled != isEnabled else {
+            return
+        }
+
+        settings.refreshEffects.isEnabled = isEnabled
+        saveSettings()
+    }
+
+    func setAutoRefreshEffectsEnabled(_ isEnabled: Bool) {
+        guard settings.refreshEffects.isAutoRefreshEnabled != isEnabled else {
+            return
+        }
+
+        settings.refreshEffects.isAutoRefreshEnabled = isEnabled
         saveSettings()
     }
 

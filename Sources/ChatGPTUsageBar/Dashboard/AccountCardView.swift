@@ -46,11 +46,16 @@ private struct LoginStateBadge: View {
 struct AccountCardView: View {
     @Environment(\.dashboardThemePalette) private var palette
 
+    @State private var observedLastReadAt: Date?
+    @State private var successPulseReadAt: Date?
+
     let account: AccountProfile
     let isCurrentAccount: Bool
     let isRefreshingUsage: Bool
     let isQueuedForRefresh: Bool
     let refreshPhase: UsageRefreshPhase?
+    let refreshTrigger: RefreshTrigger?
+    let refreshEffectSettings: RefreshEffectSettings
     let isCheckingStoredSession: Bool
     let canRefreshUsage: Bool
     let isConfirmingDelete: Bool
@@ -146,7 +151,9 @@ struct AccountCardView: View {
                 isRefreshingUsage: isRefreshingUsage,
                 isQueuedForRefresh: isQueuedForRefresh,
                 refreshPhase: refreshPhase,
-                isCheckingStoredSession: isCheckingStoredSession
+                isCheckingStoredSession: isCheckingStoredSession,
+                isShowingSuccessPulse: isShowingRefreshSuccess,
+                usesRefreshTextShimmer: shouldAnimateRefreshEffects
             )
 
             if isConfirmingDelete {
@@ -181,11 +188,20 @@ struct AccountCardView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(
-                    borderColor,
-                    lineWidth: isCurrentAccount ? 1.8 : (account.isPinned ? 1.2 : 1)
-                )
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(
+                        borderColor,
+                        lineWidth: cardBorderLineWidth
+                    )
+
+                if shouldAnimateRefreshEffects {
+                    RefreshingBorderOverlay(
+                        cornerRadius: 8,
+                        lineWidth: cardBorderLineWidth
+                    )
+                }
+            }
         )
         .shadow(
             color: palette.cardShadow,
@@ -197,6 +213,16 @@ struct AccountCardView: View {
             radius: isCurrentAccount ? 9 : 0,
             y: isCurrentAccount ? 2 : 0
         )
+        .onAppear {
+            observedLastReadAt = latestReadAt
+        }
+        .onChange(of: account.id) {
+            observedLastReadAt = latestReadAt
+            successPulseReadAt = nil
+        }
+        .onChange(of: latestReadAt) { _, newReadAt in
+            handleLastReadAtChange(newReadAt)
+        }
     }
 
     private var borderColor: Color {
@@ -209,6 +235,18 @@ struct AccountCardView: View {
         }
 
         return palette.glassStroke
+    }
+
+    private var cardBorderLineWidth: CGFloat {
+        if isCurrentAccount {
+            return 1.8
+        }
+
+        if account.isPinned {
+            return 1.2
+        }
+
+        return 1
     }
 
     private var refreshButtonHelp: String {
@@ -237,6 +275,72 @@ struct AccountCardView: View {
 
         return "重新检测本地登录状态"
     }
+
+    private var latestReadAt: Date? {
+        account.resolvedUsageSnapshot.lastReadAt
+    }
+
+    private var hasActiveRefreshFeedback: Bool {
+        refreshPhase != nil || isRefreshingUsage || isQueuedForRefresh || isCheckingStoredSession
+    }
+
+    private var isShowingRefreshSuccess: Bool {
+        guard let latestReadAt,
+              let successPulseReadAt else {
+            return false
+        }
+
+        return latestReadAt == successPulseReadAt
+            && !hasActiveRefreshFeedback
+            && account.resolvedUsageSnapshot.lastError == nil
+    }
+
+    private var shouldAnimateRefreshEffects: Bool {
+        guard hasActiveRefreshFeedback else {
+            return false
+        }
+
+        return RefreshEffectPolicy.shouldAnimate(
+            trigger: effectiveRefreshTrigger,
+            settings: refreshEffectSettings
+        )
+    }
+
+    private var effectiveRefreshTrigger: RefreshTrigger? {
+        if let refreshTrigger {
+            return refreshTrigger
+        }
+
+        if isCheckingStoredSession {
+            return .sessionRecovery
+        }
+
+        return .manual
+    }
+
+    private func handleLastReadAtChange(_ newReadAt: Date?) {
+        let previousReadAt = observedLastReadAt
+        observedLastReadAt = newReadAt
+
+        guard let newReadAt,
+              newReadAt != previousReadAt else {
+            return
+        }
+
+        guard account.resolvedUsageSnapshot.lastError == nil else {
+            successPulseReadAt = nil
+            return
+        }
+
+        successPulseReadAt = newReadAt
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            if successPulseReadAt == newReadAt {
+                successPulseReadAt = nil
+            }
+        }
+    }
 }
 
 private struct UsageSummaryView: View {
@@ -246,6 +350,8 @@ private struct UsageSummaryView: View {
     let isQueuedForRefresh: Bool
     let refreshPhase: UsageRefreshPhase?
     let isCheckingStoredSession: Bool
+    let isShowingSuccessPulse: Bool
+    let usesRefreshTextShimmer: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -256,16 +362,7 @@ private struct UsageSummaryView: View {
             usageContent
 
             if let lastError = snapshot.lastError {
-                if snapshot.hasUsageData {
-                    Label(
-                        staleFailureMessage,
-                        systemImage: "exclamationmark.triangle.fill"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .lineLimit(1)
-                    .help(lastError)
-                } else {
+                if !snapshot.hasUsageData {
                     Label(activeFailureMessage, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
@@ -280,26 +377,17 @@ private struct UsageSummaryView: View {
 
     private var statusHeader: some View {
         HStack(spacing: 8) {
-            Text("用量")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: usageLabelColumnWidth, alignment: .trailing)
+            Color.clear
+                .frame(width: usageLabelColumnWidth, height: 1)
 
-            if let activeRefreshText {
-                ShimmeringRefreshStatusLabel(text: activeRefreshText)
-                .help(activeRefreshHelp)
+            RefreshStatusLabel(
+                presentation: statusPresentation,
+                allowsShimmer: usesRefreshTextShimmer
+            )
+                .help(statusHelp)
                 .layoutPriority(1)
-            }
 
             Spacer(minLength: 8)
-
-            if let lastReadAt = snapshot.lastReadAt {
-                Text(relative(lastReadAt))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .layoutPriority(2)
-            }
         }
     }
 
@@ -356,6 +444,19 @@ private struct UsageSummaryView: View {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
+    private var statusPresentation: UsageRefreshStatusPresentation {
+        UsageRefreshStatusPresentation.resolve(
+            refreshPhase: refreshPhase,
+            isRefreshing: isRefreshingUsage,
+            isQueuedForRefresh: isQueuedForRefresh,
+            isCheckingStoredSession: isCheckingStoredSession,
+            lastReadText: isShowingSuccessPulse ? "刚刚" : snapshot.lastReadAt.map(relative),
+            isShowingSuccessPulse: isShowingSuccessPulse,
+            hasFailure: snapshot.lastError != nil,
+            failureText: snapshot.hasUsageData ? nil : "刷新失败 · 未读取到数据"
+        )
+    }
+
     private var emptyUsageText: String {
         if let activeRefreshText {
             return "\(activeRefreshText)，等待用量数据"
@@ -391,51 +492,65 @@ private struct UsageSummaryView: View {
         return nil
     }
 
-    private var activeRefreshHelp: String {
-        refreshPhase?.diagnosticLabel ?? activeRefreshText ?? "刷新中"
+    private var statusHelp: String {
+        if let refreshPhase {
+            return refreshPhase.diagnosticLabel
+        }
+
+        if let lastError = snapshot.lastError {
+            return lastError
+        }
+
+        return statusPresentation.text
     }
 
     private var activeFailureMessage: String {
         snapshot.lastFailureKind?.displayMessage ?? snapshot.lastError ?? "刷新失败，请稍后重试。"
     }
-
-    private var staleFailureMessage: String {
-        if let compactMessage = snapshot.lastFailureKind?.compactMessage {
-            return "\(compactMessage)，当前显示上次成功数据"
-        }
-
-        return "刷新失败，当前显示的是上次成功读取的数据"
-    }
 }
 
-private struct ShimmeringRefreshStatusLabel: View {
+private struct RefreshStatusLabel: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    let text: String
+    let presentation: UsageRefreshStatusPresentation
+    let allowsShimmer: Bool
 
     @State private var shimmerPhase: CGFloat = 0
 
     var body: some View {
         label
             .overlay {
-                if !reduceMotion {
+                if presentation.usesShimmer && allowsShimmer && !reduceMotion {
                     shimmerLayer
                         .mask(label)
                 }
             }
             .compositingGroup()
             .onAppear(perform: startShimmer)
-            .onChange(of: text) {
+            .onChange(of: presentation.text) {
                 startShimmer()
             }
     }
 
     private var label: some View {
-        Text(text)
+        Text(presentation.text)
             .lineLimit(1)
             .minimumScaleFactor(0.86)
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .font(.caption.weight(presentation.tone == .idle ? .medium : .semibold))
+            .foregroundStyle(foregroundColor)
+    }
+
+    private var foregroundColor: Color {
+        switch presentation.tone {
+        case .idle:
+            return .secondary
+        case .refreshing:
+            return .primary.opacity(0.76)
+        case .success:
+            return .green
+        case .failure:
+            return .orange
+        }
     }
 
     private var shimmerLayer: some View {
@@ -462,10 +577,74 @@ private struct ShimmeringRefreshStatusLabel: View {
     }
 
     private func startShimmer() {
+        guard presentation.usesShimmer,
+              allowsShimmer,
+              !reduceMotion else {
+            return
+        }
+
         shimmerPhase = 0
 
         withAnimation(.linear(duration: 1.45).delay(0.18).repeatForever(autoreverses: false)) {
             shimmerPhase = 1
+        }
+    }
+}
+
+private struct RefreshingBorderOverlay: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let cornerRadius: CGFloat
+    let lineWidth: CGFloat
+
+    @State private var phase: Double = 0
+
+    var body: some View {
+        let glowLineWidth = max(lineWidth + 1.2, 2.6)
+        let strokeStyle = StrokeStyle(
+            lineWidth: glowLineWidth,
+            lineCap: .round,
+            lineJoin: .round
+        )
+        let borderShape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+
+        return ZStack {
+            borderShape
+                .strokeBorder(Color.cyan.opacity(reduceMotion ? 0.66 : 0.18), style: strokeStyle)
+
+            if !reduceMotion {
+                AngularGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.00),
+                        .init(color: .clear, location: 0.48),
+                        .init(color: Color.cyan.opacity(0.70), location: 0.55),
+                        .init(color: Color.white.opacity(0.92), location: 0.60),
+                        .init(color: Color.cyan.opacity(0.70), location: 0.65),
+                        .init(color: .clear, location: 0.72),
+                        .init(color: .clear, location: 1.00)
+                    ],
+                    center: .center
+                )
+                .rotationEffect(.degrees(phase * 360))
+                .mask(
+                    borderShape
+                        .strokeBorder(Color.white, style: strokeStyle)
+                )
+            }
+        }
+        .allowsHitTesting(false)
+        .onAppear(perform: start)
+    }
+
+    private func start() {
+        guard !reduceMotion else {
+            return
+        }
+
+        phase = 0
+
+        withAnimation(.linear(duration: 1.8).repeatForever(autoreverses: false)) {
+            phase = 1
         }
     }
 }

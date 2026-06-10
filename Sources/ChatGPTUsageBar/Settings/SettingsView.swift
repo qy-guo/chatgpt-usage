@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     let autoRefreshSettings: AutoRefreshSettings
+    let refreshEffectSettings: RefreshEffectSettings
     let launchAtLoginStatus: LaunchAtLoginStatus
     let launchAtLoginError: String?
     let runModeText: String
@@ -15,6 +16,8 @@ struct SettingsView: View {
     let onAutoRefreshEnabledChange: (Bool) -> Void
     let onAutoRefreshTargetChange: (AutoRefreshTarget) -> Void
     let onAutoRefreshIntervalChange: (AutoRefreshInterval) -> Void
+    let onRefreshEffectsEnabledChange: (Bool) -> Void
+    let onAutoRefreshEffectsEnabledChange: (Bool) -> Void
     let onThemePreferenceChange: (AppThemePreference) -> Void
     let onOpenDataDirectory: () -> Void
     let onCopyDiagnostics: () -> Void
@@ -61,12 +64,35 @@ struct SettingsView: View {
                     }
 
                     SettingsSection(title: "刷新", systemImage: "arrow.clockwise") {
+                        SettingsToggleRow(
+                            title: "刷新特效",
+                            detail: "刷新时显示边框流光和文字光效",
+                            isOn: Binding(
+                                get: { refreshEffectSettings.isEnabled },
+                                set: { isEnabled in
+                                    onRefreshEffectsEnabledChange(isEnabled)
+                                }
+                            )
+                        )
+
                         AutoRefreshControls(
                             settings: autoRefreshSettings,
                             onEnabledChange: onAutoRefreshEnabledChange,
                             onTargetChange: onAutoRefreshTargetChange,
                             onIntervalChange: onAutoRefreshIntervalChange
                         )
+
+                        SettingsToggleRow(
+                            title: "自动刷新特效",
+                            detail: "定时自动刷新时也显示特效",
+                            isOn: Binding(
+                                get: { refreshEffectSettings.isAutoRefreshEnabled },
+                                set: { isEnabled in
+                                    onAutoRefreshEffectsEnabledChange(isEnabled)
+                                }
+                            )
+                        )
+                        .disabled(!refreshEffectSettings.isEnabled || !autoRefreshSettings.isEnabled)
                     }
 
                     SettingsSection(title: "外观", systemImage: "sparkles") {

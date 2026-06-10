@@ -477,6 +477,98 @@ func checkUsageRefreshPhaseDisplayAndDiagnostics() {
     precondition(UsageRefreshPhase.readingSubscription.diagnosticLabel == "readingSubscription: 读取订阅信息")
 }
 
+func checkUsageRefreshStatusPresentation() {
+    let active = UsageRefreshStatusPresentation.resolve(
+        refreshPhase: .openingAnalytics,
+        isRefreshing: true,
+        isQueuedForRefresh: false,
+        isCheckingStoredSession: false,
+        lastReadText: "5秒前",
+        isShowingSuccessPulse: false,
+        hasFailure: false
+    )
+    precondition(active.text == "刷新中 · 打开 Analytics 页面")
+    precondition(active.tone == .refreshing)
+    precondition(active.usesShimmer)
+    precondition(active.usesBorderShimmer)
+
+    let success = UsageRefreshStatusPresentation.resolve(
+        refreshPhase: nil,
+        isRefreshing: false,
+        isQueuedForRefresh: false,
+        isCheckingStoredSession: false,
+        lastReadText: "刚刚",
+        isShowingSuccessPulse: true,
+        hasFailure: false
+    )
+    precondition(success.text == "已刷新 · 刚刚")
+    precondition(success.tone == .success)
+    precondition(!success.usesShimmer)
+    precondition(!success.usesBorderShimmer)
+
+    let failure = UsageRefreshStatusPresentation.resolve(
+        refreshPhase: nil,
+        isRefreshing: false,
+        isQueuedForRefresh: false,
+        isCheckingStoredSession: false,
+        lastReadText: "5分钟前",
+        isShowingSuccessPulse: false,
+        hasFailure: true
+    )
+    precondition(failure.text == "刷新失败 · 当前显示上次成功数据")
+    precondition(failure.tone == .failure)
+    precondition(!failure.usesShimmer)
+    precondition(!failure.usesBorderShimmer)
+
+    let firstFailure = UsageRefreshStatusPresentation.resolve(
+        refreshPhase: nil,
+        isRefreshing: false,
+        isQueuedForRefresh: false,
+        isCheckingStoredSession: false,
+        lastReadText: "刚刚",
+        isShowingSuccessPulse: false,
+        hasFailure: true,
+        failureText: "刷新失败 · 未读取到数据"
+    )
+    precondition(firstFailure.text == "刷新失败 · 未读取到数据")
+    precondition(firstFailure.tone == .failure)
+
+    let idle = UsageRefreshStatusPresentation.resolve(
+        refreshPhase: nil,
+        isRefreshing: false,
+        isQueuedForRefresh: false,
+        isCheckingStoredSession: false,
+        lastReadText: "5秒前",
+        isShowingSuccessPulse: false,
+        hasFailure: false
+    )
+    precondition(idle.text == "已更新 · 5秒前")
+    precondition(idle.tone == .idle)
+    precondition(!idle.usesShimmer)
+    precondition(!idle.usesBorderShimmer)
+}
+
+func checkRefreshEffectPolicy() {
+    let defaultSettings = RefreshEffectSettings()
+    precondition(defaultSettings.isEnabled)
+    precondition(defaultSettings.isAutoRefreshEnabled)
+    precondition(RefreshEffectPolicy.shouldAnimate(trigger: .manual, settings: defaultSettings))
+    precondition(RefreshEffectPolicy.shouldAnimate(trigger: .automatic, settings: defaultSettings))
+    precondition(RefreshEffectPolicy.shouldAnimate(trigger: .reset, settings: defaultSettings))
+    precondition(RefreshEffectPolicy.shouldAnimate(trigger: .sessionRecovery, settings: defaultSettings))
+
+    let disabledSettings = RefreshEffectSettings(isEnabled: false, isAutoRefreshEnabled: true)
+    precondition(!RefreshEffectPolicy.shouldAnimate(trigger: .manual, settings: disabledSettings))
+    precondition(!RefreshEffectPolicy.shouldAnimate(trigger: .automatic, settings: disabledSettings))
+    precondition(!RefreshEffectPolicy.shouldAnimate(trigger: .reset, settings: disabledSettings))
+
+    let autoDisabledSettings = RefreshEffectSettings(isEnabled: true, isAutoRefreshEnabled: false)
+    precondition(RefreshEffectPolicy.shouldAnimate(trigger: .manual, settings: autoDisabledSettings))
+    precondition(!RefreshEffectPolicy.shouldAnimate(trigger: .automatic, settings: autoDisabledSettings))
+    precondition(RefreshEffectPolicy.shouldAnimate(trigger: .reset, settings: autoDisabledSettings))
+    precondition(RefreshEffectPolicy.shouldAnimate(trigger: .sessionRecovery, settings: autoDisabledSettings))
+}
+
 func checkUsageDiagnosticReportIncludesPhaseAndSuggestedAction() {
     let snapshot = UsageSnapshot(
         rawSummary: "URL=https://chatgpt.com/codex/cloud/settings/analytics TEXT=Log in Sign up",
@@ -647,6 +739,7 @@ func checkUsageStoreSettingsRoundTrip() throws {
     precondition(defaultSettings.footerQuote.currentIndex == 0)
     precondition(defaultSettings.footerQuote.lastRotationDay == nil)
     precondition(defaultSettings.themePreference == .light)
+    precondition(defaultSettings.refreshEffects == RefreshEffectSettings())
 
     let settings = UsageStoreSettings(
         selectedAccountID: selectedID,
@@ -659,7 +752,11 @@ func checkUsageStoreSettingsRoundTrip() throws {
             currentIndex: 3,
             lastRotationDay: "2026-05-25"
         ),
-        themePreference: .dark
+        themePreference: .dark,
+        refreshEffects: RefreshEffectSettings(
+            isEnabled: false,
+            isAutoRefreshEnabled: false
+        )
     )
 
     let data = try JSONEncoder().encode(settings)
@@ -672,6 +769,8 @@ func checkUsageStoreSettingsRoundTrip() throws {
     precondition(decoded.footerQuote.currentIndex == 3)
     precondition(decoded.footerQuote.lastRotationDay == "2026-05-25")
     precondition(decoded.themePreference == .dark)
+    precondition(!decoded.refreshEffects.isEnabled)
+    precondition(!decoded.refreshEffects.isAutoRefreshEnabled)
     precondition(AutoRefreshInterval.allCases.map(\.seconds) == [60, 180, 300, 900])
     precondition(AutoRefreshInterval(rawValue: 900)?.seconds == 900)
     precondition(AutoRefreshInterval(rawValue: 900)?.displayName == "15 分钟")
@@ -690,6 +789,7 @@ func checkUsageStoreSettingsRoundTrip() throws {
     let decodedLegacySettings = try JSONDecoder().decode(UsageStoreSettings.self, from: legacySettings)
     precondition(decodedLegacySettings.footerQuote == FooterQuoteSettings())
     precondition(decodedLegacySettings.themePreference == .light)
+    precondition(decodedLegacySettings.refreshEffects == RefreshEffectSettings())
 }
 
 func checkAutoRefreshScheduleWaitsBeforeEveryRefresh() {
@@ -1030,6 +1130,8 @@ checkUsageSnapshotSanitizesAnalyticsFilterChromeUsage()
 try checkUsageSnapshotFailureKindRoundTrip()
 checkUsageDiagnosticReportRedactsSensitiveValues()
 checkUsageRefreshPhaseDisplayAndDiagnostics()
+checkUsageRefreshStatusPresentation()
+checkRefreshEffectPolicy()
 checkUsageDiagnosticReportIncludesPhaseAndSuggestedAction()
 checkAccountSessionVerificationRequiresAuthenticatedPage()
 checkFirstUsageRefreshPolicyStartsAfterDetectedSession()

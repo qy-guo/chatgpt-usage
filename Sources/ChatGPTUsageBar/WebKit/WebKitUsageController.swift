@@ -9,6 +9,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
     @Published private(set) var refreshingAccountIDs = Set<UUID>()
     @Published private(set) var queuedRefreshAccountIDs: [UUID] = []
     @Published private(set) var refreshPhases: [UUID: UsageRefreshPhase] = [:]
+    @Published private(set) var refreshTriggers: [UUID: RefreshTrigger] = [:]
     @Published private(set) var checkingStoredSessionAccountIDs = Set<UUID>()
 
     private weak var store: UsageStore?
@@ -78,7 +79,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
         startSessionDetection(for: account)
     }
 
-    func refreshUsage(account: AccountProfile) {
+    func refreshUsage(account: AccountProfile, trigger: RefreshTrigger = .manual) {
         let account = latestAccount(for: account.id) ?? account
         guard account.loginState.canRefreshUsage else {
             return
@@ -90,6 +91,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
         }
 
         queuedRefreshAccountIDs.append(account.id)
+        refreshTriggers[account.id] = trigger
         setRefreshPhase(.queued, for: account.id)
         drainRefreshQueue()
     }
@@ -135,7 +137,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
                 if FirstUsageRefreshPolicy.shouldRefreshAfterSessionDetected(account: previousAccount),
                    let refreshedAccount = self.latestAccount(for: account.id) {
                     self.clearRefreshPhase(for: account.id)
-                    self.refreshUsage(account: refreshedAccount)
+                    self.refreshUsage(account: refreshedAccount, trigger: .sessionRecovery)
                     startsRefresh = self.refreshingAccountIDs.contains(account.id)
                         || self.queuedRefreshAccountIDs.contains(account.id)
                 }
@@ -175,6 +177,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
             }
 
             clearRefreshPhase(for: account.id)
+            clearRefreshTrigger(for: account.id)
             drainRefreshQueue()
         }
     }
@@ -210,6 +213,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
             guard let account = latestAccount(for: accountID),
                   account.loginState.canRefreshUsage else {
                 clearRefreshPhase(for: accountID)
+                clearRefreshTrigger(for: accountID)
                 continue
             }
 
@@ -227,7 +231,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
         }
 
         for account in store.accounts where account.loginState.canRefreshUsage {
-            refreshUsage(account: account)
+            refreshUsage(account: account, trigger: .manual)
         }
     }
 
@@ -271,7 +275,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
             }
 
             for account in autoRefreshAccounts(from: refreshedStore) {
-                refreshUsage(account: account)
+                refreshUsage(account: account, trigger: .automatic)
             }
 
             cycleIndex += 1
@@ -305,6 +309,10 @@ final class WebKitUsageController: NSObject, ObservableObject {
         refreshPhases[accountID] = nil
     }
 
+    private func clearRefreshTrigger(for accountID: UUID) {
+        refreshTriggers[accountID] = nil
+    }
+
     private func startSessionDetection(for account: AccountProfile) {
         sessionCheckTasks[account.id]?.cancel()
         sessionCheckTasks[account.id] = Task { [weak self] in
@@ -333,7 +341,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
                     )
                     if FirstUsageRefreshPolicy.shouldRefreshAfterSessionDetected(account: previousAccount),
                        let refreshedAccount = self.latestAccount(for: account.id) {
-                        self.refreshUsage(account: refreshedAccount)
+                        self.refreshUsage(account: refreshedAccount, trigger: .sessionRecovery)
                     }
                     self.sessionCheckTasks[account.id] = nil
                     return
@@ -437,7 +445,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
                 return
             }
 
-            refreshUsage(account: account)
+            refreshUsage(account: account, trigger: .reset)
             return
         }
 
@@ -458,7 +466,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
             }
 
             self.resetRefreshTasks[accountID] = nil
-            self.refreshUsage(account: account)
+            self.refreshUsage(account: account, trigger: .reset)
         }
     }
 
@@ -654,6 +662,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
         refreshingAccountIDs.remove(accountID)
         queuedRefreshAccountIDs.removeAll { $0 == accountID }
         clearRefreshPhase(for: accountID)
+        clearRefreshTrigger(for: accountID)
 
         if let loginWindow = loginWindows[accountID] {
             loginWindow.delegate = nil

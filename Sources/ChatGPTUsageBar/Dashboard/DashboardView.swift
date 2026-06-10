@@ -37,6 +37,7 @@ struct DashboardView: View {
             } else if isShowingSettings {
                 SettingsView(
                     autoRefreshSettings: store.autoRefreshSettings,
+                    refreshEffectSettings: store.refreshEffectSettings,
                     launchAtLoginStatus: launchAtLoginStatus,
                     launchAtLoginError: launchAtLoginError,
                     runModeText: AppRuntimeInfo.runMode.displayName,
@@ -58,6 +59,12 @@ struct DashboardView: View {
                     },
                     onAutoRefreshIntervalChange: { interval in
                         store.setAutoRefreshInterval(interval)
+                    },
+                    onRefreshEffectsEnabledChange: { isEnabled in
+                        store.setRefreshEffectsEnabled(isEnabled)
+                    },
+                    onAutoRefreshEffectsEnabledChange: { isEnabled in
+                        store.setAutoRefreshEffectsEnabled(isEnabled)
                     },
                     onThemePreferenceChange: { themePreference in
                         store.setThemePreference(themePreference)
@@ -141,6 +148,8 @@ struct DashboardView: View {
             isRefreshingUsage: webKitUsageController.refreshingAccountIDs.contains(account.id),
             isQueuedForRefresh: webKitUsageController.queuedRefreshAccountIDs.contains(account.id),
             refreshPhase: webKitUsageController.refreshPhases[account.id],
+            refreshTrigger: webKitUsageController.refreshTriggers[account.id],
+            refreshEffectSettings: store.refreshEffectSettings,
             isCheckingStoredSession: webKitUsageController.checkingStoredSessionAccountIDs.contains(account.id),
             canRefreshUsage: account.loginState.canRefreshUsage,
             isConfirmingDelete: !isOverlay && pendingDelete?.id == account.id,

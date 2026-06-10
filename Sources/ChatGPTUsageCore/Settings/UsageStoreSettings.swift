@@ -5,17 +5,20 @@ public struct UsageStoreSettings: Codable, Equatable {
     public var autoRefresh: AutoRefreshSettings
     public var footerQuote: FooterQuoteSettings
     public var themePreference: AppThemePreference
+    public var refreshEffects: RefreshEffectSettings
 
     public init(
         selectedAccountID: UUID? = nil,
         autoRefresh: AutoRefreshSettings = AutoRefreshSettings(),
         footerQuote: FooterQuoteSettings = FooterQuoteSettings(),
-        themePreference: AppThemePreference = .light
+        themePreference: AppThemePreference = .light,
+        refreshEffects: RefreshEffectSettings = RefreshEffectSettings()
     ) {
         self.selectedAccountID = selectedAccountID
         self.autoRefresh = autoRefresh
         self.footerQuote = footerQuote
         self.themePreference = themePreference
+        self.refreshEffects = refreshEffects
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -23,6 +26,7 @@ public struct UsageStoreSettings: Codable, Equatable {
         case autoRefresh
         case footerQuote
         case themePreference
+        case refreshEffects
     }
 
     public init(from decoder: Decoder) throws {
@@ -35,6 +39,8 @@ public struct UsageStoreSettings: Codable, Equatable {
             ?? FooterQuoteSettings()
         themePreference = try container.decodeIfPresent(AppThemePreference.self, forKey: .themePreference)
             ?? .light
+        refreshEffects = try container.decodeIfPresent(RefreshEffectSettings.self, forKey: .refreshEffects)
+            ?? RefreshEffectSettings()
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -44,5 +50,6 @@ public struct UsageStoreSettings: Codable, Equatable {
         try container.encode(autoRefresh, forKey: .autoRefresh)
         try container.encode(footerQuote, forKey: .footerQuote)
         try container.encode(themePreference, forKey: .themePreference)
+        try container.encode(refreshEffects, forKey: .refreshEffects)
     }
 }
