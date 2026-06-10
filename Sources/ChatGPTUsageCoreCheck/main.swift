@@ -132,6 +132,65 @@ func checkUsageSnapshotParserReadsArticleCards() {
     precondition(snapshot.weeklyUsage == "85% 剩余 · 重置时间：2026年5月31日 14:30")
 }
 
+func checkUsageSnapshotParserReadsStructuredExtractionCards() {
+    let snapshot = UsageSnapshotParser.parse(
+        visibleText: """
+        USAGE_CARD | kind=5h | remaining=67% | reset=Resets at 19:30
+        USAGE_CARD | kind=1w | remaining=91% | reset=重置时间：2026年6月17日 08:00
+        """
+    )
+
+    precondition(snapshot.fiveHourUsage == "67% 剩余 · Resets at 19:30")
+    precondition(snapshot.weeklyUsage == "91% 剩余 · 重置时间：2026年6月17日 08:00")
+    precondition(snapshot.rawSummary?.contains("USAGE_CARD") == true)
+}
+
+func checkUsageSnapshotParserReadsExtractionDiagnostics() {
+    let snapshot = UsageSnapshotParser.parse(
+        visibleText: """
+        EXTRACTION_DIAGNOSTICS | version=usage-extraction-v2 | structuredCards=2 | articleCards=3 | usageSignalLines=12
+        USAGE_CARD | kind=5h | remaining=67% | reset=Resets at 19:30
+        USAGE_CARD | kind=1w | remaining=91% | reset=重置时间：2026年6月17日 08:00
+        """
+    )
+
+    precondition(
+        snapshot.extractionDiagnostics == UsageExtractionDiagnostics(
+            version: "usage-extraction-v2",
+            structuredCardCount: 2,
+            articleCardCount: 3,
+            usageSignalLineCount: 12
+        )
+    )
+    precondition(snapshot.rawSummary?.contains("EXTRACTION_DIAGNOSTICS") == true)
+}
+
+func fixtureText(_ name: String) throws -> String {
+    let fixtureURL = Bundle.module.resourceURL!
+        .appendingPathComponent(name)
+    return try String(contentsOf: fixtureURL, encoding: .utf8)
+}
+
+func checkUsageSnapshotParserReadsStructuredFixture() throws {
+    let snapshot = UsageSnapshotParser.parse(
+        visibleText: try fixtureText("analytics-structured-cards.txt")
+    )
+
+    precondition(snapshot.fiveHourUsage == "67% 剩余 · Resets at 19:30")
+    precondition(snapshot.weeklyUsage == "91% 剩余 · 重置时间：2026年6月17日 08:00")
+    precondition(snapshot.extractionDiagnostics?.structuredCardCount == 2)
+}
+
+func checkUsageSnapshotParserMarksOutdatedFixture() throws {
+    let snapshot = UsageSnapshotParser.parse(
+        visibleText: try fixtureText("analytics-no-usage-cards.txt")
+    )
+
+    precondition(!snapshot.hasUsageData)
+    precondition(snapshot.lastFailureKind == .parserOutdated)
+    precondition(snapshot.extractionDiagnostics?.structuredCardCount == 0)
+}
+
 func checkUsageSnapshotParserReadsSubscriptionExpiry() {
     let snapshot = UsageSnapshotParser.parse(
         visibleText: """
@@ -199,6 +258,35 @@ func checkUsageAnalyticsReadinessDetectsLoginRequiredPages() {
     precondition(!UsageAnalyticsReadiness.isLoginRequiredMessage("Analytics 页面仍在加载使用数据，请稍后重试。"))
 }
 
+func checkUsageAnalyticsReadinessClassifiesFailureKinds() {
+    precondition(
+        UsageAnalyticsReadiness.failureKindForMissingUsage(
+            urlString: "https://chatgpt.com/auth/login",
+            visibleText: ""
+        ) == .loginRequired
+    )
+    precondition(
+        UsageAnalyticsReadiness.failureKindForMissingUsage(
+            urlString: "https://chatgpt.com/codex/cloud/settings/analytics",
+            visibleText: "Codex Analytics 正在加载使用数据"
+        ) == .analyticsLoading
+    )
+    precondition(
+        UsageAnalyticsReadiness.failureKindForMissingUsage(
+            urlString: "https://chatgpt.com/",
+            visibleText: "ChatGPT"
+        ) == .unexpectedPage
+    )
+    precondition(
+        UsageAnalyticsReadiness.failureKindForMissingUsage(
+            urlString: "https://chatgpt.com/codex/cloud/settings/analytics",
+            visibleText: "Codex Analytics 使用情况 使用详情 个人使用 额度使用记录"
+        ) == .parserOutdated
+    )
+    precondition(UsageReadFailureKind.parserOutdated.displayMessage.contains("页面结构可能变化"))
+    precondition(UsageReadFailureKind.timeout.displayMessage.contains("超时"))
+}
+
 func checkUsageSnapshotParserIgnoresAnalyticsFilterChrome() {
     let snapshot = UsageSnapshotParser.parse(
         visibleText: """
@@ -232,7 +320,8 @@ func checkUsageSnapshotPreservesPreviousUsageAfterReadFailure() {
         subscriptionExpiryText: "2026年6月24日 自动续订",
         rawSummary: "正在加载使用数据",
         lastReadAt: Date(timeIntervalSince1970: 2_000),
-        lastError: "Analytics 页面仍在加载使用数据，请稍后重试。"
+        lastError: "Analytics 页面仍在加载使用数据，请稍后重试。",
+        lastFailureKind: .analyticsLoading
     )
 
     let merged = previous.preservingUsageData(afterFailedRead: failedRead)
@@ -242,6 +331,7 @@ func checkUsageSnapshotPreservesPreviousUsageAfterReadFailure() {
     precondition(merged.subscriptionExpiryText == "2026年6月24日 自动续订")
     precondition(merged.lastReadAt == Date(timeIntervalSince1970: 2_000))
     precondition(merged.lastError == failedRead.lastError)
+    precondition(merged.lastFailureKind == .analyticsLoading)
 }
 
 func checkUsageSnapshotPreservesPreviousSubscriptionExpiryWhenBillingReadFails() {
@@ -274,6 +364,72 @@ func checkUsageSnapshotSanitizesAnalyticsFilterChromeUsage() {
     precondition(sanitized.fiveHourUsage == nil)
     precondition(sanitized.weeklyUsage == nil)
     precondition(!sanitized.hasUsageData)
+}
+
+func checkUsageSnapshotFailureKindRoundTrip() throws {
+    let snapshot = UsageSnapshot(
+        lastReadAt: Date(timeIntervalSince1970: 2_600),
+        lastError: UsageReadFailureKind.parserOutdated.displayMessage,
+        lastFailureKind: .parserOutdated,
+        extractionDiagnostics: UsageExtractionDiagnostics(
+            version: "usage-extraction-v2",
+            structuredCardCount: 0,
+            articleCardCount: 1,
+            usageSignalLineCount: 8
+        )
+    )
+
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let data = try encoder.encode(snapshot)
+
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let decoded = try decoder.decode(UsageSnapshot.self, from: data)
+
+    precondition(decoded.lastFailureKind == .parserOutdated)
+    precondition(decoded.lastError == UsageReadFailureKind.parserOutdated.displayMessage)
+    precondition(decoded.extractionDiagnostics?.articleCardCount == 1)
+}
+
+func checkUsageDiagnosticReportRedactsSensitiveValues() {
+    let snapshot = UsageSnapshot(
+        rawSummary: "User alice@example.com URL=https://chatgpt.com/auth?code=secret-code&state=secret-state session abcdefghijklmnopqrstuvwxyz1234567890",
+        lastReadAt: Date(timeIntervalSince1970: 2_700),
+        lastError: "Failed for alice@example.com with token abcdefghijklmnopqrstuvwxyz1234567890",
+        lastFailureKind: .parserOutdated,
+        extractionDiagnostics: UsageExtractionDiagnostics(
+            version: "usage-extraction-v2",
+            structuredCardCount: 0,
+            articleCardCount: 1,
+            usageSignalLineCount: 8
+        )
+    )
+
+    let report = UsageDiagnosticReport.make(
+        version: "1.2.3",
+        runMode: "应用模式",
+        launchAtLogin: "已启用",
+        dataDirectoryPath: "/Users/alice/Library/Application Support/ChatGPTUsageBar",
+        queuedRefreshCount: 1,
+        refreshingCount: 2,
+        accounts: [
+            UsageDiagnosticAccount(
+                displayName: "Alice Personal",
+                loginState: .confirmed,
+                snapshot: snapshot
+            )
+        ]
+    )
+
+    precondition(report.contains("Account: #1"))
+    precondition(report.contains("Extraction: version=usage-extraction-v2, structured=0, articles=1, signals=8"))
+    precondition(!report.contains("Alice Personal"))
+    precondition(!report.contains("alice@example.com"))
+    precondition(!report.contains("secret-code"))
+    precondition(!report.contains("secret-state"))
+    precondition(!report.contains("abcdefghijklmnopqrstuvwxyz1234567890"))
+    precondition(!report.contains("/Users/alice"))
 }
 
 func checkFirstUsageRefreshPolicyStartsAfterDetectedSession() {
@@ -414,6 +570,54 @@ func checkAutoRefreshScheduleWaitsBeforeEveryRefresh() {
             cycleIndex: 1,
             interval: .oneMinute
         ) == 60
+    )
+}
+
+func checkRefreshQueuePolicyLimitsConcurrentRefreshes() {
+    let firstID = UUID(uuidString: "00000000-0000-0000-0000-000000000051")!
+    let secondID = UUID(uuidString: "00000000-0000-0000-0000-000000000052")!
+    let thirdID = UUID(uuidString: "00000000-0000-0000-0000-000000000053")!
+    let policy = RefreshQueuePolicy(maxConcurrentRefreshes: 1)
+
+    precondition(
+        policy.startableAccountIDs(
+            queuedAccountIDs: [firstID, secondID, thirdID],
+            refreshingAccountIDs: []
+        ) == [firstID]
+    )
+    precondition(
+        policy.startableAccountIDs(
+            queuedAccountIDs: [secondID, thirdID],
+            refreshingAccountIDs: [firstID]
+        ).isEmpty
+    )
+    precondition(
+        policy.startableAccountIDs(
+            queuedAccountIDs: [secondID, thirdID],
+            refreshingAccountIDs: []
+        ) == [secondID]
+    )
+}
+
+func checkRefreshQueuePolicyDefaultsToThreeConcurrentRefreshes() {
+    let firstID = UUID(uuidString: "00000000-0000-0000-0000-000000000061")!
+    let secondID = UUID(uuidString: "00000000-0000-0000-0000-000000000062")!
+    let thirdID = UUID(uuidString: "00000000-0000-0000-0000-000000000063")!
+    let fourthID = UUID(uuidString: "00000000-0000-0000-0000-000000000064")!
+    let policy = RefreshQueuePolicy()
+
+    precondition(policy.maxConcurrentRefreshes == 3)
+    precondition(
+        policy.startableAccountIDs(
+            queuedAccountIDs: [firstID, secondID, thirdID, fourthID],
+            refreshingAccountIDs: []
+        ) == [firstID, secondID, thirdID]
+    )
+    precondition(
+        policy.startableAccountIDs(
+            queuedAccountIDs: [thirdID, fourthID],
+            refreshingAccountIDs: [firstID, secondID]
+        ) == [thirdID]
     )
 }
 
@@ -632,20 +836,29 @@ try checkAccountLoginStateDefaultsAndEligibility()
 checkUsageSnapshotParser()
 checkUsageSnapshotParserKeepsContextValues()
 checkUsageSnapshotParserReadsArticleCards()
+checkUsageSnapshotParserReadsStructuredExtractionCards()
+checkUsageSnapshotParserReadsExtractionDiagnostics()
+try checkUsageSnapshotParserReadsStructuredFixture()
+try checkUsageSnapshotParserMarksOutdatedFixture()
 checkUsageSnapshotParserReadsSubscriptionExpiry()
 checkUsageAnalyticsReadinessDetectsLoadingPage()
 checkUsageAnalyticsReadinessDetectsExpectedRoute()
 checkUsageAnalyticsReadinessDetectsLoginRequiredPages()
+checkUsageAnalyticsReadinessClassifiesFailureKinds()
 checkUsageSnapshotParserIgnoresAnalyticsFilterChrome()
 checkUsageSnapshotPreservesPreviousUsageAfterReadFailure()
 checkUsageSnapshotPreservesPreviousSubscriptionExpiryWhenBillingReadFails()
 checkUsageSnapshotSanitizesAnalyticsFilterChromeUsage()
+try checkUsageSnapshotFailureKindRoundTrip()
+checkUsageDiagnosticReportRedactsSensitiveValues()
 checkFirstUsageRefreshPolicyStartsAfterDetectedSession()
 checkAccountDeletionPlanClearsLocalSession()
 checkAccountProfileOrderingMovesSourceBeforeTarget()
 checkAccountProfileOrderingKeepsPinnedAccountsAtTop()
 try checkUsageStoreSettingsRoundTrip()
 checkAutoRefreshScheduleWaitsBeforeEveryRefresh()
+checkRefreshQueuePolicyLimitsConcurrentRefreshes()
+checkRefreshQueuePolicyDefaultsToThreeConcurrentRefreshes()
 checkAppDisplayInfoFormatting()
 checkAppThemePreference()
 checkUsageResetScheduleParsesFiveHourResetDates()

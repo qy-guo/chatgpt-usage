@@ -7,8 +7,10 @@ import WebKit
 @MainActor
 final class WebKitUsageController: NSObject, ObservableObject {
     @Published private(set) var refreshingAccountIDs = Set<UUID>()
+    @Published private(set) var queuedRefreshAccountIDs: [UUID] = []
 
     private weak var store: UsageStore?
+    private let refreshQueuePolicy = RefreshQueuePolicy()
     private var loginWindows: [UUID: NSWindow] = [:]
     private var loginWebViews: [UUID: WKWebView] = [:]
     private var popupWindows: [NSWindow] = []
@@ -78,10 +80,16 @@ final class WebKitUsageController: NSObject, ObservableObject {
             return
         }
 
-        guard !refreshingAccountIDs.contains(account.id) else {
+        guard !refreshingAccountIDs.contains(account.id),
+              !queuedRefreshAccountIDs.contains(account.id) else {
             return
         }
 
+        queuedRefreshAccountIDs.append(account.id)
+        drainRefreshQueue()
+    }
+
+    private func startRefresh(account: AccountProfile) {
         refreshingAccountIDs.insert(account.id)
 
         Task {
@@ -89,7 +97,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
             refreshingAccountIDs.remove(account.id)
             store?.updateUsageSnapshot(accountID: account.id, snapshot: snapshot)
 
-            if UsageAnalyticsReadiness.isLoginRequiredMessage(snapshot.lastError) {
+            if snapshot.lastFailureKind == .loginRequired {
                 store?.updateLoginState(accountID: account.id, loginState: .notLoggedIn)
                 resetRefreshTasks[account.id]?.cancel()
                 resetRefreshTasks[account.id] = nil
@@ -104,6 +112,8 @@ final class WebKitUsageController: NSObject, ObservableObject {
                 resetRefreshTasks[account.id]?.cancel()
                 resetRefreshTasks[account.id] = nil
             }
+
+            drainRefreshQueue()
         }
     }
 
@@ -121,6 +131,31 @@ final class WebKitUsageController: NSObject, ObservableObject {
         }
 
         store?.deleteAccount(id: deletionPlan.accountID)
+    }
+
+    private func drainRefreshQueue() {
+        let startableAccountIDs = refreshQueuePolicy.startableAccountIDs(
+            queuedAccountIDs: queuedRefreshAccountIDs,
+            refreshingAccountIDs: refreshingAccountIDs
+        )
+        guard !startableAccountIDs.isEmpty else {
+            return
+        }
+
+        for accountID in startableAccountIDs {
+            queuedRefreshAccountIDs.removeAll { $0 == accountID }
+
+            guard let account = latestAccount(for: accountID),
+                  account.loginState.canRefreshUsage else {
+                continue
+            }
+
+            startRefresh(account: account)
+        }
+
+        if !queuedRefreshAccountIDs.isEmpty {
+            drainRefreshQueue()
+        }
     }
 
     func refreshAllLoggedInAccounts() {
@@ -323,6 +358,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
 
         var lastSnapshot = UsageSnapshot.empty
         var lastError: String?
+        var lastFailureKind: UsageReadFailureKind?
         var consecutiveLoadingAttempts = 0
         var loadingReloadCount = 0
 
@@ -332,12 +368,13 @@ final class WebKitUsageController: NSObject, ObservableObject {
             do {
                 let currentURL = await currentLocationString(from: webView)
                 if UsageAnalyticsReadiness.isLoginRequiredPage(urlString: currentURL, visibleText: "") {
-                    return loginRequiredSnapshot()
+                    return failureSnapshot(kind: .loginRequired)
                 }
 
                 guard UsageAnalyticsReadiness.isExpectedAnalyticsURL(currentURL) else {
                     consecutiveLoadingAttempts = 0
-                    lastError = "正在切换到 Analytics 页面，请稍后重试。"
+                    lastFailureKind = .unexpectedPage
+                    lastError = lastFailureKind?.displayMessage
 
                     if attempt == 0 || attempt % 3 == 2 {
                         reloadAnalyticsPage(webView)
@@ -361,13 +398,14 @@ final class WebKitUsageController: NSObject, ObservableObject {
                     urlString: currentURL,
                     visibleText: diagnostics.payload
                 ) {
-                    return loginRequiredSnapshot()
+                    return failureSnapshot(kind: .loginRequired)
                 }
 
                 if UsageAnalyticsReadiness.isStillLoading(payload)
                     || UsageAnalyticsReadiness.isStillLoading(diagnostics.payload) {
                     consecutiveLoadingAttempts += 1
-                    lastError = "Analytics 页面仍在加载使用数据，请稍后重试。"
+                    lastFailureKind = .analyticsLoading
+                    lastError = lastFailureKind?.displayMessage
 
                     if consecutiveLoadingAttempts >= 3 && loadingReloadCount < 2 {
                         reloadAnalyticsPage(webView)
@@ -379,22 +417,29 @@ final class WebKitUsageController: NSObject, ObservableObject {
                 }
 
                 consecutiveLoadingAttempts = 0
-                lastError = diagnosticMessage(from: diagnostics)
+                lastFailureKind = UsageAnalyticsReadiness.failureKindForMissingUsage(
+                    urlString: currentURL,
+                    visibleText: diagnostics.payload
+                )
+                lastError = lastFailureKind?.displayMessage ?? diagnosticMessage(from: diagnostics)
             } catch {
                 consecutiveLoadingAttempts = 0
-                lastError = error.localizedDescription
+                lastFailureKind = .webKitEvaluation
+                lastError = "\(UsageReadFailureKind.webKitEvaluation.displayMessage) \(error.localizedDescription)"
             }
         }
 
         lastSnapshot.lastReadAt = Date()
-        lastSnapshot.lastError = lastError ?? "后台读取 analytics 超时。请打开登录窗口确认账号仍处于登录状态。"
+        lastSnapshot.lastFailureKind = lastFailureKind ?? .timeout
+        lastSnapshot.lastError = lastError ?? lastSnapshot.lastFailureKind?.displayMessage
         return lastSnapshot
     }
 
-    private func loginRequiredSnapshot() -> UsageSnapshot {
+    private func failureSnapshot(kind: UsageReadFailureKind) -> UsageSnapshot {
         UsageSnapshot(
             lastReadAt: Date(),
-            lastError: UsageAnalyticsReadiness.loginRequiredMessage
+            lastError: kind.displayMessage,
+            lastFailureKind: kind
         )
     }
 
@@ -470,6 +515,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
         resetRefreshTasks[accountID]?.cancel()
         resetRefreshTasks[accountID] = nil
         refreshingAccountIDs.remove(accountID)
+        queuedRefreshAccountIDs.removeAll { $0 == accountID }
 
         if let loginWindow = loginWindows[accountID] {
             loginWindow.delegate = nil
@@ -529,6 +575,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
     private static func usageExtractionJavaScript() -> String {
         """
         (() => {
+          const extractionVersion = "usage-extraction-v2";
           const normalize = (value) => String(value || "").replace(/\\s+/g, " ").trim();
           try {
             window.scrollTo({ top: 0, behavior: "instant" });
@@ -554,6 +601,13 @@ final class WebKitUsageController: NSObject, ObservableObject {
           };
 
           const articleSummaries = [];
+          const structuredCards = [];
+          const usageKind = (value) => {
+            const text = normalize(value).toLowerCase();
+            if (/(5\\s*小时|5\\s*h|5-hour|5\\s*hour|five[-\\s]?hour)/i.test(text)) return "5h";
+            if (/(每周|一周|1\\s*w|week|weekly)/i.test(text)) return "1w";
+            return "";
+          };
           document.querySelectorAll("article").forEach((article) => {
             const text = normalize(article.innerText);
             if (!/(5\\s*小时|每周|week|5\\s*h|5-hour|usage|限额)/i.test(text)) return;
@@ -561,9 +615,19 @@ final class WebKitUsageController: NSObject, ObservableObject {
             const percent = normalize(article.querySelector(".text-2xl")?.innerText || (text.match(/\\d+(?:\\.\\d+)?%/) || [""])[0]);
             const reset = normalize(Array.from(article.querySelectorAll("span")).map((span) => span.innerText).find((value) => /重置|reset/i.test(value)));
             const bar = normalize(Array.from(article.querySelectorAll('[style*="width"]')).map((element) => element.style.width).filter(Boolean).pop());
+            const kind = usageKind([title, text].join(" "));
+            if (kind && percent) {
+              structuredCards.push([
+                "USAGE_CARD",
+                `kind=${kind}`,
+                `remaining=${percent}`,
+                reset ? `reset=${reset}` : ""
+              ].filter(Boolean).join(" | "));
+            }
             articleSummaries.push(["CARD", title, percent, bar, reset, text].filter(Boolean).join(" | "));
           });
 
+          if (structuredCards.length) add(structuredCards.join("\\n"));
           if (articleSummaries.length) add(articleSummaries.join("\\n"));
           add(document.body ? document.body.innerText : "");
           document.querySelectorAll("[aria-label],[title]").forEach((element) => {
@@ -578,6 +642,13 @@ final class WebKitUsageController: NSObject, ObservableObject {
             const max = element.getAttribute("aria-valuemax") || "";
             add(["progressbar", label, now, min, max].filter(Boolean).join(" "));
           });
+          out.unshift([
+            "EXTRACTION_DIAGNOSTICS",
+            `version=${extractionVersion}`,
+            `structuredCards=${structuredCards.length}`,
+            `articleCards=${articleSummaries.length}`,
+            `usageSignalLines=${out.length}`
+          ].join(" | "));
           return out.join("\\n");
         })()
         """

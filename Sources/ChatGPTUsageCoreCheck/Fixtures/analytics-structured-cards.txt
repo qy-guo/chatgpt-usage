@@ -1,0 +1,9 @@
+EXTRACTION_DIAGNOSTICS | version=usage-extraction-v2 | structuredCards=2 | articleCards=2 | usageSignalLines=14
+Codex Analytics
+Usage
+Usage details
+Personal usage
+USAGE_CARD | kind=5h | remaining=67% | reset=Resets at 19:30
+USAGE_CARD | kind=1w | remaining=91% | reset=重置时间：2026年6月17日 08:00
+CARD | 5 小时使用限额 | 67% | 67% | Resets at 19:30 | 5 小时使用限额 67% 剩余 Resets at 19:30
+CARD | 每周使用限额 | 91% | 91% | 重置时间：2026年6月17日 08:00 | 每周使用限额 91% 剩余 重置时间：2026年6月17日 08:00

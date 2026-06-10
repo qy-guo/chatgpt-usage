@@ -1,0 +1,7 @@
+EXTRACTION_DIAGNOSTICS | version=usage-extraction-v2 | structuredCards=0 | articleCards=0 | usageSignalLines=5
+Codex Analytics
+Usage
+Usage details
+Personal usage
+Quota usage history
+No usage cards were found in this page shape.

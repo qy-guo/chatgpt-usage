@@ -49,6 +49,7 @@ struct AccountCardView: View {
     let account: AccountProfile
     let isCurrentAccount: Bool
     let isRefreshingUsage: Bool
+    let isQueuedForRefresh: Bool
     let canRefreshUsage: Bool
     let isConfirmingDelete: Bool
     let onTogglePinned: () -> Void
@@ -110,8 +111,8 @@ struct AccountCardView: View {
                         Image(systemName: "arrow.clockwise")
                     }
                     .buttonStyle(GlassIconButtonStyle(tint: .primary))
-                    .disabled(isRefreshingUsage || !canRefreshUsage)
-                    .help(canRefreshUsage ? "刷新用量" : "登录后可刷新用量")
+                    .disabled(isRefreshingUsage || isQueuedForRefresh || !canRefreshUsage)
+                    .help(refreshButtonHelp)
 
                     Button(action: onEdit) {
                         Image(systemName: "pencil")
@@ -130,7 +131,8 @@ struct AccountCardView: View {
             UsageSummaryView(
                 snapshot: account.resolvedUsageSnapshot,
                 loginState: account.loginState,
-                isRefreshingUsage: isRefreshingUsage
+                isRefreshingUsage: isRefreshingUsage,
+                isQueuedForRefresh: isQueuedForRefresh
             )
 
             if isConfirmingDelete {
@@ -194,12 +196,25 @@ struct AccountCardView: View {
 
         return palette.glassStroke
     }
+
+    private var refreshButtonHelp: String {
+        if isQueuedForRefresh {
+            return "刷新已加入队列"
+        }
+
+        if canRefreshUsage {
+            return "刷新用量"
+        }
+
+        return "登录后可刷新用量"
+    }
 }
 
 private struct UsageSummaryView: View {
     let snapshot: UsageSnapshot
     let loginState: AccountLoginState
     let isRefreshingUsage: Bool
+    let isQueuedForRefresh: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -212,7 +227,7 @@ private struct UsageSummaryView: View {
             if let lastError = snapshot.lastError {
                 if snapshot.hasUsageData {
                     Label(
-                        "刷新失败，当前显示的是上次成功读取的数据",
+                        staleFailureMessage,
                         systemImage: "exclamationmark.triangle.fill"
                     )
                     .font(.caption)
@@ -220,11 +235,12 @@ private struct UsageSummaryView: View {
                     .lineLimit(1)
                     .help(lastError)
                 } else {
-                    Label(lastError, systemImage: "exclamationmark.triangle.fill")
+                    Label(activeFailureMessage, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .lineLimit(5)
                         .textSelection(.enabled)
+                        .help(lastError)
                 }
             }
         }
@@ -237,6 +253,11 @@ private struct UsageSummaryView: View {
                 if isRefreshingUsage {
                     ProgressView()
                         .controlSize(.small)
+                        .frame(width: 10, height: 10)
+                } else if isQueuedForRefresh {
+                    Image(systemName: "hourglass")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
                         .frame(width: 10, height: 10)
                 }
 
@@ -314,6 +335,10 @@ private struct UsageSummaryView: View {
             return "正在后台读取 Usage Dashboard"
         }
 
+        if isQueuedForRefresh {
+            return "等待前序账号刷新完成"
+        }
+
         switch loginState {
         case .notLoggedIn:
             return "先点击登录图标完成 ChatGPT 登录"
@@ -322,6 +347,18 @@ private struct UsageSummaryView: View {
         case .confirmed:
             return "登录后用右上角刷新读取用量"
         }
+    }
+
+    private var activeFailureMessage: String {
+        snapshot.lastFailureKind?.displayMessage ?? snapshot.lastError ?? "刷新失败，请稍后重试。"
+    }
+
+    private var staleFailureMessage: String {
+        if let compactMessage = snapshot.lastFailureKind?.compactMessage {
+            return "\(compactMessage)，当前显示上次成功数据"
+        }
+
+        return "刷新失败，当前显示的是上次成功读取的数据"
     }
 }
 

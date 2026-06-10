@@ -65,7 +65,7 @@ public enum AutoRefreshSchedule {
 }
 
 public enum UsageAnalyticsReadiness {
-    public static let loginRequiredMessage = "登录状态已失效，请重新登录。"
+    public static let loginRequiredMessage = UsageReadFailureKind.loginRequired.displayMessage
 
     public static func isExpectedAnalyticsURL(_ urlString: String?) -> Bool {
         guard let urlString,
@@ -119,6 +119,25 @@ public enum UsageAnalyticsReadiness {
 
     public static func isLoginRequiredMessage(_ message: String?) -> Bool {
         message == loginRequiredMessage
+    }
+
+    public static func failureKindForMissingUsage(
+        urlString: String?,
+        visibleText: String
+    ) -> UsageReadFailureKind {
+        if isLoginRequiredPage(urlString: urlString, visibleText: visibleText) {
+            return .loginRequired
+        }
+
+        if isStillLoading(visibleText) {
+            return .analyticsLoading
+        }
+
+        if !isExpectedAnalyticsURL(urlString) {
+            return .unexpectedPage
+        }
+
+        return .parserOutdated
     }
 
     public static func isStillLoading(_ visibleText: String) -> Bool {

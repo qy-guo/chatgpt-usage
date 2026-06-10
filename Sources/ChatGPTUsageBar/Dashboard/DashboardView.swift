@@ -139,6 +139,7 @@ struct DashboardView: View {
             account: account,
             isCurrentAccount: store.selectedAccountID == account.id,
             isRefreshingUsage: webKitUsageController.refreshingAccountIDs.contains(account.id),
+            isQueuedForRefresh: webKitUsageController.queuedRefreshAccountIDs.contains(account.id),
             canRefreshUsage: account.loginState.canRefreshUsage,
             isConfirmingDelete: !isOverlay && pendingDelete?.id == account.id,
             onTogglePinned: {
@@ -352,6 +353,11 @@ struct DashboardView: View {
             return "还没有账号档案"
         }
 
+        if !webKitUsageController.refreshingAccountIDs.isEmpty
+            || !webKitUsageController.queuedRefreshAccountIDs.isEmpty {
+            return "\(accountCount) 个账号，刷新中 \(webKitUsageController.refreshingAccountIDs.count)，等待 \(webKitUsageController.queuedRefreshAccountIDs.count)"
+        }
+
         if let selectedAccountID = store.selectedAccountID,
            let selectedAccount = store.accounts.first(where: { $0.id == selectedAccountID }) {
             return "\(accountCount) 个账号，当前：\(selectedAccount.displayName)"
@@ -376,13 +382,22 @@ struct DashboardView: View {
     }
 
     private func copyDiagnostics() {
-        let diagnostics = [
-            "Version: \(AppRuntimeInfo.versionText)",
-            "Run mode: \(AppRuntimeInfo.runMode.displayName)",
-            "Launch at login: \(launchAtLoginStatus.displayText)",
-            "Accounts: \(store.accounts.count)",
-            "Data: \(store.dataDirectoryPath)"
-        ].joined(separator: "\n")
+        let diagnosticAccounts = store.accounts.map { account in
+            UsageDiagnosticAccount(
+                displayName: account.displayName,
+                loginState: account.loginState,
+                snapshot: account.resolvedUsageSnapshot
+            )
+        }
+        let diagnostics = UsageDiagnosticReport.make(
+            version: AppRuntimeInfo.versionText,
+            runMode: AppRuntimeInfo.runMode.displayName,
+            launchAtLogin: launchAtLoginStatus.displayText,
+            dataDirectoryPath: store.dataDirectoryPath,
+            queuedRefreshCount: webKitUsageController.queuedRefreshAccountIDs.count,
+            refreshingCount: webKitUsageController.refreshingAccountIDs.count,
+            accounts: diagnosticAccounts
+        )
 
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()

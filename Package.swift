@@ -20,7 +20,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "ChatGPTUsageCoreCheck",
-            dependencies: ["ChatGPTUsageCore"]
+            dependencies: ["ChatGPTUsageCore"],
+            resources: [
+                .process("Fixtures")
+            ]
         )
     ]
 )

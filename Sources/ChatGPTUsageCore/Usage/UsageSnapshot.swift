@@ -7,6 +7,8 @@ public struct UsageSnapshot: Codable, Equatable {
     public var rawSummary: String?
     public var lastReadAt: Date?
     public var lastError: String?
+    public var lastFailureKind: UsageReadFailureKind?
+    public var extractionDiagnostics: UsageExtractionDiagnostics?
 
     public init(
         fiveHourUsage: String? = nil,
@@ -14,7 +16,9 @@ public struct UsageSnapshot: Codable, Equatable {
         subscriptionExpiryText: String? = nil,
         rawSummary: String? = nil,
         lastReadAt: Date? = nil,
-        lastError: String? = nil
+        lastError: String? = nil,
+        lastFailureKind: UsageReadFailureKind? = nil,
+        extractionDiagnostics: UsageExtractionDiagnostics? = nil
     ) {
         self.fiveHourUsage = fiveHourUsage
         self.weeklyUsage = weeklyUsage
@@ -22,6 +26,8 @@ public struct UsageSnapshot: Codable, Equatable {
         self.rawSummary = rawSummary
         self.lastReadAt = lastReadAt
         self.lastError = lastError
+        self.lastFailureKind = lastFailureKind
+        self.extractionDiagnostics = extractionDiagnostics
     }
 
     public static var empty: UsageSnapshot {
@@ -47,6 +53,8 @@ public struct UsageSnapshot: Codable, Equatable {
         }
         merged.lastReadAt = failedRead.lastReadAt ?? merged.lastReadAt
         merged.lastError = failedRead.lastError
+        merged.lastFailureKind = failedRead.lastFailureKind
+        merged.extractionDiagnostics = failedRead.extractionDiagnostics
         return merged
     }
 
