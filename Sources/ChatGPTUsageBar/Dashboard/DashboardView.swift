@@ -140,6 +140,7 @@ struct DashboardView: View {
             isCurrentAccount: store.selectedAccountID == account.id,
             isRefreshingUsage: webKitUsageController.refreshingAccountIDs.contains(account.id),
             isQueuedForRefresh: webKitUsageController.queuedRefreshAccountIDs.contains(account.id),
+            refreshPhase: webKitUsageController.refreshPhases[account.id],
             canRefreshUsage: account.loginState.canRefreshUsage,
             isConfirmingDelete: !isOverlay && pendingDelete?.id == account.id,
             onTogglePinned: {
@@ -386,6 +387,7 @@ struct DashboardView: View {
             UsageDiagnosticAccount(
                 displayName: account.displayName,
                 loginState: account.loginState,
+                refreshPhase: webKitUsageController.refreshPhases[account.id],
                 snapshot: account.resolvedUsageSnapshot
             )
         }

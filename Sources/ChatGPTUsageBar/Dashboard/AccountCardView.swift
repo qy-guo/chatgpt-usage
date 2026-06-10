@@ -50,6 +50,7 @@ struct AccountCardView: View {
     let isCurrentAccount: Bool
     let isRefreshingUsage: Bool
     let isQueuedForRefresh: Bool
+    let refreshPhase: UsageRefreshPhase?
     let canRefreshUsage: Bool
     let isConfirmingDelete: Bool
     let onTogglePinned: () -> Void
@@ -132,7 +133,8 @@ struct AccountCardView: View {
                 snapshot: account.resolvedUsageSnapshot,
                 loginState: account.loginState,
                 isRefreshingUsage: isRefreshingUsage,
-                isQueuedForRefresh: isQueuedForRefresh
+                isQueuedForRefresh: isQueuedForRefresh,
+                refreshPhase: refreshPhase
             )
 
             if isConfirmingDelete {
@@ -215,10 +217,20 @@ private struct UsageSummaryView: View {
     let loginState: AccountLoginState
     let isRefreshingUsage: Bool
     let isQueuedForRefresh: Bool
+    let refreshPhase: UsageRefreshPhase?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             statusHeader
+
+            if snapshot.hasUsageData,
+               let activeRefreshText {
+                Label(activeRefreshText, systemImage: activeRefreshSystemImage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help(activeRefreshHelp)
+            }
 
             subscriptionExpiryContent
 
@@ -331,12 +343,8 @@ private struct UsageSummaryView: View {
     }
 
     private var emptyUsageText: String {
-        if isRefreshingUsage {
-            return "正在后台读取 Usage Dashboard"
-        }
-
-        if isQueuedForRefresh {
-            return "等待前序账号刷新完成"
+        if let activeRefreshText {
+            return activeRefreshText
         }
 
         switch loginState {
@@ -347,6 +355,34 @@ private struct UsageSummaryView: View {
         case .confirmed:
             return "登录后用右上角刷新读取用量"
         }
+    }
+
+    private var activeRefreshText: String? {
+        if let refreshPhase {
+            return refreshPhase.displayName
+        }
+
+        if isQueuedForRefresh {
+            return "等待刷新队列"
+        }
+
+        if isRefreshingUsage {
+            return "正在后台读取 Usage Dashboard"
+        }
+
+        return nil
+    }
+
+    private var activeRefreshSystemImage: String {
+        if isQueuedForRefresh || refreshPhase == .queued {
+            return "hourglass"
+        }
+
+        return "arrow.triangle.2.circlepath"
+    }
+
+    private var activeRefreshHelp: String {
+        refreshPhase?.diagnosticLabel ?? activeRefreshText ?? "刷新中"
     }
 
     private var activeFailureMessage: String {

@@ -8,6 +8,7 @@ import WebKit
 final class WebKitUsageController: NSObject, ObservableObject {
     @Published private(set) var refreshingAccountIDs = Set<UUID>()
     @Published private(set) var queuedRefreshAccountIDs: [UUID] = []
+    @Published private(set) var refreshPhases: [UUID: UsageRefreshPhase] = [:]
 
     private weak var store: UsageStore?
     private let refreshQueuePolicy = RefreshQueuePolicy()
@@ -86,14 +87,17 @@ final class WebKitUsageController: NSObject, ObservableObject {
         }
 
         queuedRefreshAccountIDs.append(account.id)
+        setRefreshPhase(.queued, for: account.id)
         drainRefreshQueue()
     }
 
     private func startRefresh(account: AccountProfile) {
         refreshingAccountIDs.insert(account.id)
+        setRefreshPhase(.openingAnalytics, for: account.id)
 
         Task {
             let snapshot = await readUsage(account: account)
+            setRefreshPhase(.savingResult, for: account.id)
             refreshingAccountIDs.remove(account.id)
             store?.updateUsageSnapshot(accountID: account.id, snapshot: snapshot)
 
@@ -113,6 +117,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
                 resetRefreshTasks[account.id] = nil
             }
 
+            clearRefreshPhase(for: account.id)
             drainRefreshQueue()
         }
     }
@@ -147,6 +152,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
 
             guard let account = latestAccount(for: accountID),
                   account.loginState.canRefreshUsage else {
+                clearRefreshPhase(for: accountID)
                 continue
             }
 
@@ -234,6 +240,14 @@ final class WebKitUsageController: NSObject, ObservableObject {
         store?.accounts.first { $0.id == accountID }
     }
 
+    private func setRefreshPhase(_ phase: UsageRefreshPhase, for accountID: UUID) {
+        refreshPhases[accountID] = phase
+    }
+
+    private func clearRefreshPhase(for accountID: UUID) {
+        refreshPhases[accountID] = nil
+    }
+
     private func startSessionDetection(for account: AccountProfile) {
         sessionCheckTasks[account.id]?.cancel()
         sessionCheckTasks[account.id] = Task { [weak self] in
@@ -251,8 +265,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
 
                 let cookieCount = await self.cookieCount(for: account)
                 if cookieCount > 0 {
-                    if let loginURL = self.loginWebViews[account.id]?.url?.absoluteString,
-                       UsageAnalyticsReadiness.isLoginRequiredPage(urlString: loginURL, visibleText: "") {
+                    guard await self.loginSessionIsVerified(for: account, cookieCount: cookieCount) else {
                         continue
                     }
 
@@ -272,6 +285,20 @@ final class WebKitUsageController: NSObject, ObservableObject {
 
             self?.sessionCheckTasks[account.id] = nil
         }
+    }
+
+    private func loginSessionIsVerified(for account: AccountProfile, cookieCount: Int) async -> Bool {
+        guard let webView = loginWebViews[account.id] else {
+            return false
+        }
+
+        let currentURL = await currentLocationString(from: webView)
+        let payload = (try? await webView.evaluateJavaScript(Self.diagnosticJavaScript()) as? String) ?? ""
+        return AccountSessionVerification.canTrustCookieSession(
+            cookieCount: cookieCount,
+            urlString: currentURL,
+            visibleText: payload
+        )
     }
 
     func rescheduleResetRefreshes() {
@@ -345,8 +372,13 @@ final class WebKitUsageController: NSObject, ObservableObject {
         webView.uiDelegate = self
         mountBackgroundWebView(webView, for: account)
 
+        setRefreshPhase(.openingAnalytics, for: account.id)
         var snapshot = await readAnalyticsUsage(from: webView, account: account)
-        if let subscriptionExpiryText = await readSubscriptionExpiryText(from: webView) {
+        if snapshot.lastFailureKind != .loginRequired {
+            setRefreshPhase(.readingSubscription, for: account.id)
+        }
+        if snapshot.lastFailureKind != .loginRequired,
+           let subscriptionExpiryText = await readSubscriptionExpiryText(from: webView) {
             snapshot.subscriptionExpiryText = subscriptionExpiryText
         }
 
@@ -354,6 +386,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
     }
 
     private func readAnalyticsUsage(from webView: WKWebView, account: AccountProfile) async -> UsageSnapshot {
+        setRefreshPhase(.openingAnalytics, for: account.id)
         webView.load(URLRequest(url: ChatGPTUsageURLs.analytics))
 
         var lastSnapshot = UsageSnapshot.empty
@@ -366,6 +399,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
             try? await Task.sleep(for: .seconds(attempt == 0 ? 8 : 2))
 
             do {
+                setRefreshPhase(.checkingLogin, for: account.id)
                 let currentURL = await currentLocationString(from: webView)
                 if UsageAnalyticsReadiness.isLoginRequiredPage(urlString: currentURL, visibleText: "") {
                     return failureSnapshot(kind: .loginRequired)
@@ -375,6 +409,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
                     consecutiveLoadingAttempts = 0
                     lastFailureKind = .unexpectedPage
                     lastError = lastFailureKind?.displayMessage
+                    setRefreshPhase(.openingAnalytics, for: account.id)
 
                     if attempt == 0 || attempt % 3 == 2 {
                         reloadAnalyticsPage(webView)
@@ -383,6 +418,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
                     continue
                 }
 
+                setRefreshPhase(.readingAnalytics, for: account.id)
                 let payload = try await webView.evaluateJavaScript(Self.usageExtractionJavaScript()) as? String ?? ""
                 var snapshot = UsageSnapshotParser.parse(visibleText: payload)
                 let foundUsage = snapshot.fiveHourUsage != nil || snapshot.weeklyUsage != nil
@@ -406,6 +442,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
                     consecutiveLoadingAttempts += 1
                     lastFailureKind = .analyticsLoading
                     lastError = lastFailureKind?.displayMessage
+                    setRefreshPhase(.waitingForAnalytics, for: account.id)
 
                     if consecutiveLoadingAttempts >= 3 && loadingReloadCount < 2 {
                         reloadAnalyticsPage(webView)
@@ -516,6 +553,7 @@ final class WebKitUsageController: NSObject, ObservableObject {
         resetRefreshTasks[accountID] = nil
         refreshingAccountIDs.remove(accountID)
         queuedRefreshAccountIDs.removeAll { $0 == accountID }
+        clearRefreshPhase(for: accountID)
 
         if let loginWindow = loginWindows[accountID] {
             loginWindow.delegate = nil

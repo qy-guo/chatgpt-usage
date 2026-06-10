@@ -432,6 +432,95 @@ func checkUsageDiagnosticReportRedactsSensitiveValues() {
     precondition(!report.contains("/Users/alice"))
 }
 
+func checkUsageRefreshPhaseDisplayAndDiagnostics() {
+    precondition(UsageRefreshPhase.queued.displayName == "等待刷新队列")
+    precondition(UsageRefreshPhase.checkingLogin.displayName == "确认登录状态")
+    precondition(UsageRefreshPhase.readingAnalytics.displayName == "读取 Analytics 用量")
+    precondition(UsageRefreshPhase.readingSubscription.diagnosticLabel == "readingSubscription: 读取订阅信息")
+}
+
+func checkUsageDiagnosticReportIncludesPhaseAndSuggestedAction() {
+    let snapshot = UsageSnapshot(
+        rawSummary: "URL=https://chatgpt.com/codex/cloud/settings/analytics TEXT=Log in Sign up",
+        lastReadAt: Date(timeIntervalSince1970: 2_800),
+        lastError: UsageReadFailureKind.loginRequired.displayMessage,
+        lastFailureKind: .loginRequired,
+        extractionDiagnostics: UsageExtractionDiagnostics(
+            version: "usage-extraction-v2",
+            structuredCardCount: 0,
+            articleCardCount: 0,
+            usageSignalLineCount: 3
+        )
+    )
+
+    let report = UsageDiagnosticReport.make(
+        version: "1.2.3",
+        runMode: "应用模式",
+        launchAtLogin: "已启用",
+        dataDirectoryPath: "/Users/alice/Library/Application Support/ChatGPTUsageBar",
+        queuedRefreshCount: 0,
+        refreshingCount: 1,
+        accounts: [
+            UsageDiagnosticAccount(
+                displayName: "Alice Personal",
+                loginState: .sessionDetected,
+                refreshPhase: .readingAnalytics,
+                snapshot: snapshot
+            )
+        ]
+    )
+
+    precondition(report.contains("Diagnostic report: ChatGPT Usage Bar"))
+    precondition(report.contains("Privacy: sensitive values are redacted before copying."))
+    precondition(report.contains("Refresh phase: readingAnalytics: 读取 Analytics 用量"))
+    precondition(report.contains("Suggested action: 重新打开登录窗口完成登录，然后再次刷新。"))
+}
+
+func checkAccountSessionVerificationRequiresAuthenticatedPage() {
+    precondition(
+        !AccountSessionVerification.canTrustCookieSession(
+            cookieCount: 0,
+            urlString: "https://chatgpt.com/",
+            visibleText: "ChatGPT New chat Settings"
+        )
+    )
+    precondition(
+        !AccountSessionVerification.canTrustCookieSession(
+            cookieCount: 3,
+            urlString: "https://chatgpt.com/auth/login",
+            visibleText: "Log in Sign up Continue with Google"
+        )
+    )
+    precondition(
+        !AccountSessionVerification.canTrustCookieSession(
+            cookieCount: 3,
+            urlString: "https://chatgpt.com/",
+            visibleText: "Log in Sign up"
+        )
+    )
+    precondition(
+        !AccountSessionVerification.canTrustCookieSession(
+            cookieCount: 3,
+            urlString: "https://chatgpt.com/",
+            visibleText: "ChatGPT"
+        )
+    )
+    precondition(
+        AccountSessionVerification.canTrustCookieSession(
+            cookieCount: 3,
+            urlString: "https://chatgpt.com/",
+            visibleText: "ChatGPT New chat Explore GPTs Settings Log out"
+        )
+    )
+    precondition(
+        AccountSessionVerification.canTrustCookieSession(
+            cookieCount: 3,
+            urlString: "https://chatgpt.com/codex/cloud/settings/analytics",
+            visibleText: "Codex Analytics Usage details Personal usage"
+        )
+    )
+}
+
 func checkFirstUsageRefreshPolicyStartsAfterDetectedSession() {
     let emptyAccount = AccountProfile.starter(profileDirectory: "Default")
     precondition(FirstUsageRefreshPolicy.shouldRefreshAfterSessionDetected(account: emptyAccount))
@@ -851,6 +940,9 @@ checkUsageSnapshotPreservesPreviousSubscriptionExpiryWhenBillingReadFails()
 checkUsageSnapshotSanitizesAnalyticsFilterChromeUsage()
 try checkUsageSnapshotFailureKindRoundTrip()
 checkUsageDiagnosticReportRedactsSensitiveValues()
+checkUsageRefreshPhaseDisplayAndDiagnostics()
+checkUsageDiagnosticReportIncludesPhaseAndSuggestedAction()
+checkAccountSessionVerificationRequiresAuthenticatedPage()
 checkFirstUsageRefreshPolicyStartsAfterDetectedSession()
 checkAccountDeletionPlanClearsLocalSession()
 checkAccountProfileOrderingMovesSourceBeforeTarget()

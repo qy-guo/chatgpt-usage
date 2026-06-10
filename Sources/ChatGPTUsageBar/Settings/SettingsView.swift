@@ -98,7 +98,7 @@ struct SettingsView: View {
                             }
 
                             SettingsActionButton(
-                                title: "复制诊断信息",
+                                title: "复制脱敏诊断",
                                 systemImage: "doc.on.doc"
                             ) {
                                 onCopyDiagnostics()
