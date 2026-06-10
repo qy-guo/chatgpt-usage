@@ -211,6 +211,22 @@ func checkUsageSnapshotParserReadsSubscriptionExpiry() {
     precondition(noisySnapshot.subscriptionExpiryText == "2026年6月18日 自动续订")
 }
 
+func checkUsageSnapshotParserIgnoresQuotaResetAsSubscriptionExpiry() {
+    let snapshot = UsageSnapshotParser.parse(
+        visibleText: """
+        EXTRACTION_DIAGNOSTICS | version=usage-extraction-v2 | structuredCards=2 | articleCards=2 | usageSignalLines=12
+        Codex Analytics
+        5 小时使用限额将于 15:59 重置。 升级 添加额度 余额 Codex 使用量会从您共享的智能体使用限额中扣除 5...
+        USAGE_CARD | kind=5h | remaining=0% | reset=重置 15:59
+        USAGE_CARD | kind=1w | remaining=51% | reset=重置 2026年6月12日 13:30
+        """
+    )
+
+    precondition(snapshot.subscriptionExpiryText == nil)
+    precondition(snapshot.fiveHourUsage == "0% 剩余 · 重置 15:59")
+    precondition(snapshot.weeklyUsage == "51% 剩余 · 重置 2026年6月12日 13:30")
+}
+
 func checkUsageAnalyticsReadinessDetectsLoadingPage() {
     let loadingDiagnostics = """
     URL=https://chatgpt.com/codex/cloud/settings/analytics
@@ -930,6 +946,7 @@ checkUsageSnapshotParserReadsExtractionDiagnostics()
 try checkUsageSnapshotParserReadsStructuredFixture()
 try checkUsageSnapshotParserMarksOutdatedFixture()
 checkUsageSnapshotParserReadsSubscriptionExpiry()
+checkUsageSnapshotParserIgnoresQuotaResetAsSubscriptionExpiry()
 checkUsageAnalyticsReadinessDetectsLoadingPage()
 checkUsageAnalyticsReadinessDetectsExpectedRoute()
 checkUsageAnalyticsReadinessDetectsLoginRequiredPages()
